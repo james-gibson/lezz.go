@@ -30,7 +30,7 @@ func (f *ghReleaseFetcher) FetchLatest(ctx context.Context, dest string) (string
 	// so it can atomically rename old → .old and new → target.  Create an empty
 	// placeholder on a fresh install so the rename does not fail with ENOENT.
 	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		if wErr := os.WriteFile(dest, []byte{}, 0o755); wErr != nil {
+		if wErr := os.WriteFile(dest, []byte{}, 0o600); wErr != nil {
 			return "", fmt.Errorf("create install placeholder: %w", wErr)
 		}
 	}
@@ -61,21 +61,25 @@ type fileFetcher struct {
 	version string
 }
 
-func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (string, error) {
+func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (version string, err error) {
 	in, err := os.Open(f.src)
 	if err != nil {
 		return "", fmt.Errorf("open source: %w", err)
 	}
-	defer in.Close()
+	defer in.Close() //nolint:errcheck
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("create dest: %w", err)
 	}
-	defer out.Close()
+	defer func() {
+		if cErr := out.Close(); cErr != nil && err == nil {
+			err = fmt.Errorf("close dest: %w", cErr)
+		}
+	}()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return "", fmt.Errorf("copy: %w", err)
+	if _, copyErr := io.Copy(out, in); copyErr != nil {
+		return "", fmt.Errorf("copy: %w", copyErr)
 	}
 
 	return f.version, nil
@@ -93,7 +97,7 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		return "", fmt.Errorf("create bin dir: %w", err)
 	}
 
@@ -108,7 +112,7 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 func installViaGoInstall(ctx context.Context, tool Tool, binDir string) (string, error) {
 	module := "github.com/" + tool.GithubSlug + "/cmd/" + tool.Name + "@latest"
 
-	cmd := exec.CommandContext(ctx, "go", "install", module)
+	cmd := exec.CommandContext(ctx, "go", "install", module) //nolint:gosec
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -276,14 +276,14 @@ type mockRelease struct {
 	asset   selfupdate.SourceAsset
 }
 
-func (r *mockRelease) GetID() int64                       { return 1 }
-func (r *mockRelease) GetTagName() string                 { return r.tagName }
-func (r *mockRelease) GetDraft() bool                     { return false }
-func (r *mockRelease) GetPrerelease() bool                { return false }
-func (r *mockRelease) GetPublishedAt() time.Time          { return time.Now() }
-func (r *mockRelease) GetReleaseNotes() string            { return "" }
-func (r *mockRelease) GetName() string                    { return r.tagName }
-func (r *mockRelease) GetURL() string                     { return "https://example.com/releases/1" }
+func (r *mockRelease) GetID() int64                        { return 1 }
+func (r *mockRelease) GetTagName() string                  { return r.tagName }
+func (r *mockRelease) GetDraft() bool                      { return false }
+func (r *mockRelease) GetPrerelease() bool                 { return false }
+func (r *mockRelease) GetPublishedAt() time.Time           { return time.Now() }
+func (r *mockRelease) GetReleaseNotes() string             { return "" }
+func (r *mockRelease) GetName() string                     { return r.tagName }
+func (r *mockRelease) GetURL() string                      { return "https://example.com/releases/1" }
 func (r *mockRelease) GetAssets() []selfupdate.SourceAsset { return []selfupdate.SourceAsset{r.asset} }
 
 // mockAsset implements selfupdate.SourceAsset.
