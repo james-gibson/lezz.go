@@ -82,6 +82,12 @@ func cmdInstall(ctx context.Context) {
 		os.Exit(1)
 	}
 	fmt.Printf("installed %s %s\n", tool.Name, ver)
+
+	binDir, _ := tools.BinDir()
+	if binDir != "" && !isOnPath(binDir) {
+		fmt.Printf("\nAdd lezz's bin directory to your PATH:\n")
+		fmt.Printf("  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc && source ~/.zshrc\n", binDir)
+	}
 }
 
 // lezz update
@@ -130,6 +136,15 @@ func cmdService() {
 	}
 }
 
+func isOnPath(dir string) bool {
+	for _, p := range strings.Split(os.Getenv("PATH"), ":") {
+		if p == dir {
+			return true
+		}
+	}
+	return false
+}
+
 func usage() {
 	fmt.Print(`lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner
 
@@ -141,6 +156,6 @@ Usage:
   lezz service remove <tool>         Remove daemon config for a tool
   lezz version                       Print version
 
-Managed tools: adhd, ocd-smoke-alarm, tuner
+Managed tools: lezz, adhd, ocd-smoke-alarm, tuner
 `)
 }
