@@ -47,5 +47,5 @@ func Run(name string, args []string) error {
 	}
 
 	argv := append([]string{binary}, args...)
-	return syscall.Exec(binary, argv, os.Environ()) //nolint:gosec
+	return syscall.Exec(binary, argv, os.Environ()) //nolint:gosec // binary path is resolved via Find() from the managed tool registry
 }

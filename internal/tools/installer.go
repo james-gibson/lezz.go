@@ -66,9 +66,9 @@ func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (version strin
 	if err != nil {
 		return "", fmt.Errorf("open source: %w", err)
 	}
-	defer in.Close() //nolint:errcheck
+	defer in.Close() //nolint:errcheck // read-only file; close error is inconsequential
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // dest is a controlled path under ~/.lezz/bin
 	if err != nil {
 		return "", fmt.Errorf("create dest: %w", err)
 	}
@@ -112,7 +112,7 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 func installViaGoInstall(ctx context.Context, tool Tool, binDir string) (string, error) {
 	module := "github.com/" + tool.GithubSlug + "/cmd/" + tool.Name + "@latest"
 
-	cmd := exec.CommandContext(ctx, "go", "install", module) //nolint:gosec
+	cmd := exec.CommandContext(ctx, "go", "install", module) //nolint:gosec // module path is constructed from the registry-defined tool slug
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
