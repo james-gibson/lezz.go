@@ -1,4 +1,4 @@
-module github.com/jamesrom/lezz.go
+module github.com/james-gibson/lezz.go
 
 go 1.24.11
 

@@ -8,7 +8,7 @@ import (
 	"github.com/creativeprojects/go-selfupdate"
 )
 
-const slug = "jamesrom/lezz.go"
+const slug = "james-gibson/lezz.go"
 
 // Check returns the latest available version string without applying it.
 func Check(ctx context.Context, currentVersion string) (latest string, hasUpdate bool, err error) {

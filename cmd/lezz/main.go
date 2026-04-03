@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jamesrom/lezz.go/internal/selfupdate"
-	"github.com/jamesrom/lezz.go/internal/tools"
+	"github.com/james-gibson/lezz.go/internal/selfupdate"
+	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
 const version = "dev"
