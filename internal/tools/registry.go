@@ -19,7 +19,7 @@ var Registry = []Tool{
 	},
 	{
 		Name:       "ocd-smoke-alarm",
-		GithubSlug: "james-gibson/ocd-smoke-alarm",
+		GithubSlug: "james-gibson/smoke-alarm",
 	},
 	{
 		Name:       "tuner",
