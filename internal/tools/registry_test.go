@@ -5,7 +5,7 @@ import (
 )
 
 func TestLookup_KnownTools(t *testing.T) {
-	for _, name := range []string{"adhd", "ocd-smoke-alarm", "tuner"} {
+	for _, name := range []string{"lezz", "adhd", "ocd-smoke-alarm", "tuner"} {
 		tool, ok := Lookup(name)
 		if !ok {
 			t.Errorf("Lookup(%q) = false, want true", name)

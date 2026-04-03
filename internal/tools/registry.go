@@ -10,16 +10,20 @@ type Tool struct {
 // Registry is the canonical list of tools lezz manages.
 var Registry = []Tool{
 	{
+		Name:       "lezz",
+		GithubSlug: "james-gibson/lezz.go",
+	},
+	{
 		Name:       "adhd",
-		GithubSlug: "jamesrom/adhd",
+		GithubSlug: "james-gibson/adhd",
 	},
 	{
 		Name:       "ocd-smoke-alarm",
-		GithubSlug: "jamesrom/ocd-smoke-alarm",
+		GithubSlug: "james-gibson/ocd-smoke-alarm",
 	},
 	{
 		Name:       "tuner",
-		GithubSlug: "jamesrom/tuner",
+		GithubSlug: "james-gibson/tuner",
 	},
 }
 
