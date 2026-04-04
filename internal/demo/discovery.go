@@ -70,7 +70,11 @@ func outboundIP() string {
 		return "127.0.0.1"
 	}
 	defer func() { _ = conn.Close() }()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String() //nolint:forcetypeassert // Dial("udp") always returns *UDPAddr
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return "127.0.0.1"
+	}
+	return addr.IP.String()
 }
 
 // BrowseDemoCluster does a short mDNS browse for a running lezz demo and
@@ -126,7 +130,7 @@ func clusterInfoFromTXT(entry *zeroconf.ServiceEntry) *ClusterInfo {
 
 // fetchClusterInfo retrieves ClusterInfo from a /cluster HTTP endpoint.
 func fetchClusterInfo(ctx context.Context, url string) (*ClusterInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
