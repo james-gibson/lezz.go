@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
 	"github.com/james-gibson/lezz.go/internal/tools"
@@ -34,7 +36,7 @@ func main() {
 		cmdService()
 
 	case "version":
-		fmt.Println("lezz", version)
+		cmdVersion()
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
@@ -134,6 +136,26 @@ func cmdService() {
 		fmt.Fprintf(os.Stderr, "unknown service action %q; use install or remove\n", action)
 		os.Exit(1)
 	}
+}
+
+func cmdVersion() {
+	fmt.Println("lezz", version)
+	fmt.Println()
+
+	binDir, _ := tools.BinDir()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "TOOL\tINSTALLED\tDAEMON")
+	for _, t := range tools.Registry {
+		installed := "no"
+		if binDir != "" {
+			if _, err := os.Stat(filepath.Join(binDir, t.Name)); err == nil {
+				installed = "yes"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, installed, "not configured")
+	}
+	w.Flush()
 }
 
 func isOnPath(dir string) bool {
