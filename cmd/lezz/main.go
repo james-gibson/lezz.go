@@ -38,6 +38,9 @@ func main() {
 	case "service":
 		cmdService()
 
+	case "start":
+		cmdStart()
+
 	case "version":
 		cmdVersion()
 
@@ -117,6 +120,29 @@ func cmdUpdate(ctx context.Context) {
 		os.Exit(1)
 	}
 	fmt.Printf("updated to %s — restart lezz to use the new version\n", applied)
+}
+
+// lezz start <tool> [args...]
+// Spawns the tool as a child process and waits for it to exit.
+// Unlike "lezz run", lezz stays alive as the parent (useful for scripting clusters).
+func cmdStart() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: lezz start <tool> [args...]")
+		fmt.Fprintf(os.Stderr, "managed tools: %s\n", strings.Join(tools.Names(), ", "))
+		os.Exit(1)
+	}
+	name := os.Args[2]
+	args := os.Args[3:]
+
+	cmd, err := tools.Start(name, args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := cmd.Wait(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
 // lezz service install|remove <tool> [profile]
@@ -242,7 +268,8 @@ func usage() {
 	fmt.Print(`lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner
 
 Usage:
-  lezz run <tool> [args...]          Launch a managed tool
+  lezz run <tool> [args...]          Replace lezz with the tool (exec)
+  lezz start <tool> [args...]        Spawn the tool as a child process (wait)
   lezz install <tool>                Download and install a managed tool
   lezz update                        Check for and apply lezz self-update
   lezz service install <tool>        Configure systemd/cron for a tool
