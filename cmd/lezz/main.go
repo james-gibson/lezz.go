@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
+	"github.com/james-gibson/lezz.go/internal/service"
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
@@ -118,22 +119,66 @@ func cmdUpdate(ctx context.Context) {
 	fmt.Printf("updated to %s — restart lezz to use the new version\n", applied)
 }
 
-// lezz service install|remove <tool>
+// lezz service install|remove <tool> [profile]
 func cmdService() {
 	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove <tool>")
+		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove <tool> [profile]")
 		os.Exit(1)
 	}
 	action := os.Args[2]
-	name := os.Args[3]
+	toolName := os.Args[3]
+	profileName := "idle"
+	if len(os.Args) >= 5 {
+		profileName = os.Args[4]
+	}
+
+	t, ok := tools.Lookup(toolName)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown tool %q\nmanaged tools: %s\n", toolName, strings.Join(tools.Names(), ", "))
+		os.Exit(1)
+	}
+
+	p, ok := tools.LookupProfile(t, profileName)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "tool %q has no profile %q\n", toolName, profileName)
+		if len(t.Profiles) == 0 {
+			fmt.Fprintf(os.Stderr, "%s has no daemon profiles\n", toolName)
+		} else {
+			fmt.Fprintf(os.Stderr, "available profiles:")
+			for _, pr := range t.Profiles {
+				fmt.Fprintf(os.Stderr, "\n  %-12s  %s", pr.Name, pr.Description)
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+		os.Exit(1)
+	}
 
 	switch action {
 	case "install":
-		fmt.Fprintf(os.Stderr, "service install for %q: not yet implemented\n", name)
-		os.Exit(1)
+		binDir, err := tools.BinDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cannot locate bin dir:", err)
+			os.Exit(1)
+		}
+		binPath := filepath.Join(binDir, t.Name)
+		if _, err := os.Stat(binPath); err != nil {
+			fmt.Fprintf(os.Stderr, "%s is not installed — run: lezz install %s\n", t.Name, t.Name)
+			os.Exit(1)
+		}
+		if err := service.Install(t, p, binPath); err != nil {
+			fmt.Fprintln(os.Stderr, "service install failed:", err)
+			os.Exit(1)
+		}
+		plistPath, _ := service.PlistPath(t, p)
+		fmt.Printf("installed %s (%s)\n", t.Name, p.Name)
+		fmt.Printf("plist: %s\n", plistPath)
+		fmt.Printf("logs:  ~/.lezz/logs/com.james-gibson.%s.%s.{log,err}\n", t.Name, p.Name)
 	case "remove":
-		fmt.Fprintf(os.Stderr, "service remove for %q: not yet implemented\n", name)
-		os.Exit(1)
+		if err := service.Remove(t, p); err != nil {
+			fmt.Fprintln(os.Stderr, "service remove failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("removed %s (%s)\n", t.Name, p.Name)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown service action %q; use install or remove\n", action)
 		os.Exit(1)
