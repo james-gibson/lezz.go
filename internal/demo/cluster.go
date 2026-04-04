@@ -3,7 +3,6 @@ package demo
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/james-gibson/isotope"
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
@@ -219,33 +219,17 @@ func killProcess(cmd *exec.Cmd) {
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 }
 
-// isotopeListEntry mirrors the record returned by smoke-alarm's /isotope/list endpoint.
-type isotopeListEntry struct {
-	Name      string `json:"name"`
-	TrustRung int    `json:"trust_rung"`
-	RungName  string `json:"rung_name"`
-}
-
 // queryIsotopeTrust fetches the isotope list from the smoke-alarm health server
 // and returns a human-readable trust summary string.
 func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
-	url := smokeAlarmURL + "/isotope/list"
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return "unavailable"
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "unavailable"
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var entries []isotopeListEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil || len(entries) == 0 {
+	entries, err := isotope.NewClient(smokeAlarmURL).List(reqCtx)
+	if err != nil || len(entries) == 0 {
+		if err != nil {
+			return "unavailable"
+		}
 		return "none registered"
 	}
 
