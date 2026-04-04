@@ -281,8 +281,8 @@ func cmdPurge(ctx context.Context) {
 		for _, svc := range services {
 			fmt.Printf("  %s\n", svc.Label)
 		}
-		if err := service.Purge(); err != nil {
-			fmt.Fprintln(os.Stderr, "purge: service purge:", err)
+		if purgeErr := service.Purge(); purgeErr != nil {
+			fmt.Fprintln(os.Stderr, "purge: service purge:", purgeErr)
 		}
 	}
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// PurgeResult summarises what was removed during a purge.
+// PurgeResult summarizes what was removed during a purge.
 type PurgeResult struct {
 	BinsRemoved   []string // tool names whose binaries were deleted from ~/.lezz/bin
 	BinsMissing   []string // tool names not present in ~/.lezz/bin (skipped)
