@@ -14,7 +14,7 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
-const launchdLabel = "com.james-gibson.%s.%s" // com.james-gibson.<tool>.<profile>
+const launchdLabel = "co.james-gibson.lab.%s.%s" // co.james-gibson.lab.<tool>.<profile>
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -151,7 +151,7 @@ func List() ([]Info, error) {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasPrefix(name, "com.james-gibson.") || !strings.HasSuffix(name, ".plist") {
+		if !strings.HasPrefix(name, "co.james-gibson.lab.") || !strings.HasSuffix(name, ".plist") {
 			continue
 		}
 		label := strings.TrimSuffix(name, ".plist")

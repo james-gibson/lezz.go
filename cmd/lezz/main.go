@@ -224,7 +224,7 @@ func cmdService() {
 		plistPath, _ := service.PlistPath(t, p)
 		fmt.Printf("installed %s (%s)\n", t.Name, p.Name)
 		fmt.Printf("plist: %s\n", plistPath)
-		fmt.Printf("logs:  ~/.lezz/logs/com.james-gibson.%s.%s.{log,err}\n", t.Name, p.Name)
+		fmt.Printf("logs:  ~/.lezz/logs/co.james-gibson.lab.%s.%s.{log,err}\n", t.Name, p.Name)
 	case "remove":
 		if err := service.Remove(t, p); err != nil {
 			fmt.Fprintln(os.Stderr, "service remove failed:", err)
