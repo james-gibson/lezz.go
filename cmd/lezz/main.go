@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/james-gibson/lezz.go/internal/demo"
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
 	"github.com/james-gibson/lezz.go/internal/service"
 	"github.com/james-gibson/lezz.go/internal/tools"
@@ -23,17 +24,24 @@ func main() {
 		os.Exit(0)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	switch os.Args[1] {
+	case "demo":
+		cmdDemo(ctx)
+		cancel()
+
 	case "run":
+		cancel()
 		cmdRun()
 
 	case "install":
 		cmdInstall(ctx)
+		cancel()
 
 	case "update":
 		cmdUpdate(ctx)
+		cancel()
 
 	case "service":
 		cmdService()
@@ -47,6 +55,15 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		usage()
+		os.Exit(1)
+	}
+}
+
+// lezz demo
+// Launches a self-contained demo cluster: 2 ocd-smoke-alarm instances + adhd headless.
+func cmdDemo(ctx context.Context) {
+	if err := demo.Run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "demo:", err)
 		os.Exit(1)
 	}
 }
@@ -268,6 +285,7 @@ func usage() {
 	fmt.Print(`lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner
 
 Usage:
+  lezz demo                          Launch a self-contained demo cluster
   lezz run <tool> [args...]          Replace lezz with the tool (exec)
   lezz start <tool> [args...]        Spawn the tool as a child process (wait)
   lezz install <tool>                Download and install a managed tool
