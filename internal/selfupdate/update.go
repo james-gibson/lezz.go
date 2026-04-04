@@ -4,11 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/creativeprojects/go-selfupdate"
 )
 
 const slug = "james-gibson/lezz.go"
+
+// isValidSemver returns true when v looks like a semver tag that go-selfupdate
+// can parse (must start with a digit after an optional "v" prefix).
+func isValidSemver(v string) bool {
+	v = strings.TrimPrefix(v, "v")
+	return len(v) > 0 && v[0] >= '0' && v[0] <= '9'
+}
 
 // newUpdater creates an unauthenticated updater for public GitHub repos.
 // go-selfupdate inherits $GITHUB_TOKEN from the environment when no token is
@@ -38,6 +46,10 @@ func Check(ctx context.Context, currentVersion string) (latest string, hasUpdate
 		return currentVersion, false, nil
 	}
 
+	if !isValidSemver(currentVersion) {
+		// dev build — report the latest version but never claim it's an upgrade
+		return release.Version(), false, nil
+	}
 	return release.Version(), release.GreaterThan(currentVersion), nil
 }
 
@@ -58,7 +70,10 @@ func Apply(ctx context.Context, currentVersion string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("detect latest: %w", err)
 	}
-	if !found || !release.GreaterThan(currentVersion) {
+	if !found {
+		return currentVersion, nil
+	}
+	if isValidSemver(currentVersion) && !release.GreaterThan(currentVersion) {
 		return currentVersion, nil // already current
 	}
 
