@@ -350,8 +350,8 @@ func Run(ctx context.Context) error {
 	}
 
 	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
-	switch {
-	case discoveryErr == nil:
+	switch discoveryErr {
+	case nil:
 		// We own the port — also register mDNS so LAN clients can find us.
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
