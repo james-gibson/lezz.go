@@ -10,9 +10,22 @@ import (
 
 const slug = "james-gibson/lezz.go"
 
+// newUpdater creates an unauthenticated updater for public GitHub repos.
+// go-selfupdate inherits $GITHUB_TOKEN from the environment when no token is
+// configured; a stale or unrelated token causes 401 on public repos, so we
+// clear it before constructing the updater.
+func newUpdater() (*selfupdate.Updater, error) {
+	old, had := os.LookupEnv("GITHUB_TOKEN")
+	if had {
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		defer func() { _ = os.Setenv("GITHUB_TOKEN", old) }()
+	}
+	return selfupdate.NewUpdater(selfupdate.Config{})
+}
+
 // Check returns the latest available version string without applying it.
 func Check(ctx context.Context, currentVersion string) (latest string, hasUpdate bool, err error) {
-	updater, err := selfupdate.NewUpdater(selfupdate.Config{})
+	updater, err := newUpdater()
 	if err != nil {
 		return "", false, fmt.Errorf("create updater: %w", err)
 	}
@@ -36,7 +49,7 @@ func Apply(ctx context.Context, currentVersion string) (string, error) {
 		return "", fmt.Errorf("locate executable: %w", err)
 	}
 
-	updater, err := selfupdate.NewUpdater(selfupdate.Config{})
+	updater, err := newUpdater()
 	if err != nil {
 		return "", fmt.Errorf("create updater: %w", err)
 	}
