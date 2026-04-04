@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -145,17 +147,40 @@ func cmdVersion() {
 	binDir, _ := tools.BinDir()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	_, _ = fmt.Fprintln(w, "TOOL\tINSTALLED\tDAEMON")
+	_, _ = fmt.Fprintln(w, "TOOL\tVERSION\tDAEMON")
 	for _, t := range tools.Registry {
-		installed := "no"
-		if binDir != "" {
-			if _, err := os.Stat(filepath.Join(binDir, t.Name)); err == nil {
-				installed = "yes"
+		var toolVersion string
+		if t.Name == "lezz" {
+			toolVersion = version
+		} else if binDir != "" {
+			binPath := filepath.Join(binDir, t.Name)
+			if _, err := os.Stat(binPath); err == nil {
+				toolVersion = toolVersionStr(binPath)
+			} else {
+				toolVersion = "not installed"
 			}
+		} else {
+			toolVersion = "not installed"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, installed, "not configured")
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, toolVersion, "not configured")
 	}
 	_ = w.Flush()
+}
+
+// toolVersionStr runs <binary> -v and returns the first line of output,
+// falling back to "unknown" if the call fails or produces no output.
+func toolVersionStr(binPath string) string {
+	var out bytes.Buffer
+	cmd := exec.Command(binPath, "-v")
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "unknown"
+	}
+	line := strings.TrimSpace(out.String())
+	if line == "" {
+		return "unknown"
+	}
+	return line
 }
 
 func isOnPath(dir string) bool {
