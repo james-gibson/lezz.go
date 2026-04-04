@@ -16,6 +16,10 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
+func clusterName() string {
+	return fmt.Sprintf("demo-%d", os.Getpid())
+}
+
 // healthListenAddr is the bind address for smoke-alarm health servers.
 // 0.0.0.0 makes them reachable from the LAN, not just localhost.
 const healthListenAddr = "0.0.0.0"
@@ -339,27 +343,35 @@ func Run(ctx context.Context) error {
 	// --- Start discovery (fixed port + mDNS) --------------------------------
 	host := outboundIP()
 	clusterInfo := ClusterInfo{
+		Name:    clusterName(),
 		AlarmA:  fmt.Sprintf("http://%s:%d", host, portA),
 		AlarmB:  fmt.Sprintf("http://%s:%d", host, portB),
 		AdhdMCP: fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
 	}
 
 	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
-	if discoveryErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: discovery endpoint unavailable: %v\n", discoveryErr)
-	} else {
+	switch {
+	case discoveryErr == nil:
+		// We own the port — also register mDNS so LAN clients can find us.
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer shutdownCancel()
 			_ = discoverySrv.Shutdown(shutdownCtx)
 		}()
-	}
-
-	mdnsSrv, mdnsErr := registerMDNS(clusterInfo)
-	if mdnsErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
-	} else {
-		defer mdnsSrv.Shutdown()
+		if mdnsSrv, mdnsErr := registerMDNS(); mdnsErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
+		} else {
+			defer mdnsSrv.Shutdown()
+		}
+	default:
+		// Port taken — try to join an existing lezz registry.
+		deregFn, joinErr := joinDiscoveryServer(clusterInfo)
+		if joinErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: discovery unavailable (port busy, not a lezz registry): %v\n", joinErr)
+		} else {
+			fmt.Printf("joined existing discovery registry as %s\n", clusterInfo.Name)
+			defer deregFn()
+		}
 	}
 
 	// --- Print summary ------------------------------------------------------
