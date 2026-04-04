@@ -124,9 +124,9 @@ func Remove(t tools.Tool, p tools.DaemonProfile) error {
 
 // ServiceInfo describes an installed lezz-managed launchd service.
 type ServiceInfo struct {
-	Label    string
+	Label     string
 	PlistPath string
-	Running  bool // true if launchctl reports the service is loaded and running
+	Running   bool // true if launchctl reports the service is loaded and running
 }
 
 // List returns all lezz-managed services currently installed in ~/Library/LaunchAgents.
