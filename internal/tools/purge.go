@@ -26,6 +26,9 @@ func PurgeBins() (PurgeResult, error) {
 
 	var r PurgeResult
 	for _, t := range Registry {
+		if t.Name == "lezz" {
+			continue // never remove the running lezz binary
+		}
 		p := filepath.Join(binDir, t.Name)
 		if err := os.Remove(p); err != nil {
 			if os.IsNotExist(err) {
@@ -49,8 +52,8 @@ func PurgeBins() (PurgeResult, error) {
 func PurgeGoCache(ctx context.Context) PurgeResult {
 	var r PurgeResult
 	for _, t := range Registry {
-		if t.GithubSlug == "" {
-			continue
+		if t.Name == "lezz" || t.GithubSlug == "" {
+			continue // lezz manages itself; don't clean its own cache
 		}
 		// Module import path: github.com/<slug>/...
 		// GithubSlug is "owner/repo" so module root is github.com/owner/repo.
@@ -82,8 +85,8 @@ func PurgeModCache(ctx context.Context) PurgeResult {
 	}
 
 	for _, t := range Registry {
-		if t.GithubSlug == "" {
-			continue
+		if t.Name == "lezz" || t.GithubSlug == "" {
+			continue // lezz manages itself; don't touch its module cache
 		}
 		// Module cache layout: $GOMODCACHE/github.com/<owner>/<repo>@<version>
 		// Glob for any version of this module.
