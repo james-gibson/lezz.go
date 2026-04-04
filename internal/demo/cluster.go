@@ -94,7 +94,7 @@ var smokeAlarmConfigTmpl = template.Must(template.New("smoke-alarm").Parse(`vers
 service:
   name: "ocd-smoke-alarm"
   environment: "lezz-demo"
-  mode: "foreground"
+  mode: "background"
   log_level: "warn"
   poll_interval: "5s"
   timeout: "3s"
@@ -325,13 +325,13 @@ func Run(ctx context.Context) error {
 	adhdLogPath := tmpRoot + "/adhd.log"
 
 	// --- Start ocd-smoke-alarm instances ------------------------------------
-	cmdA, err := tools.Start("ocd-smoke-alarm", []string{"--config", configA})
+	cmdA, err := tools.Start("ocd-smoke-alarm", []string{"serve", "-config", configA})
 	if err != nil {
 		return fmt.Errorf("start alarm-a: %w", err)
 	}
 	defer killProcess(cmdA)
 
-	cmdB, err := tools.Start("ocd-smoke-alarm", []string{"--config", configB})
+	cmdB, err := tools.Start("ocd-smoke-alarm", []string{"serve", "-config", configB})
 	if err != nil {
 		return fmt.Errorf("start alarm-b: %w", err)
 	}
