@@ -145,6 +145,10 @@ runtime:
 discovery:
   enabled: false
 
+tuner:
+  enabled: true
+  advertise: true
+
 alerts:
   aggressive: false
   notify_on_regression_immediately: true
