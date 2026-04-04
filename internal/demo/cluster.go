@@ -16,6 +16,10 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
+// healthListenAddr is the bind address for smoke-alarm health servers.
+// 0.0.0.0 makes them reachable from the LAN, not just localhost.
+const healthListenAddr = "0.0.0.0"
+
 // stableDemoConfigPath returns ~/.lezz/demo-adhd.yaml, creating the parent dir.
 func stableDemoConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -93,7 +97,7 @@ service:
 
 health:
   enabled: true
-  listen_addr: "127.0.0.1:{{.Port}}"
+  listen_addr: "{{.ListenAddr}}:{{.Port}}"
   self_check: true
   endpoints:
     healthz: "/healthz"
@@ -130,10 +134,11 @@ targets:
 
 // smokeAlarmConfig holds template data for one smoke-alarm instance.
 type smokeAlarmConfig struct {
-	Port     int
-	StateDir string
-	PeerName string
-	PeerPort int
+	Port       int
+	ListenAddr string
+	StateDir   string
+	PeerName   string
+	PeerPort   int
 }
 
 // adhdConfigTmpl is the minimal YAML config for adhd in headless mode.
@@ -247,20 +252,22 @@ func Run(ctx context.Context) error {
 
 	// --- Write configs ------------------------------------------------------
 	configA, err := writeTempConfig(tmpRoot, "alarm-a", smokeAlarmConfigTmpl, smokeAlarmConfig{
-		Port:     portA,
-		StateDir: stateA,
-		PeerName: "alarm-b",
-		PeerPort: portB,
+		Port:       portA,
+		ListenAddr: healthListenAddr,
+		StateDir:   stateA,
+		PeerName:   "alarm-b",
+		PeerPort:   portB,
 	})
 	if err != nil {
 		return err
 	}
 
 	configB, err := writeTempConfig(tmpRoot, "alarm-b", smokeAlarmConfigTmpl, smokeAlarmConfig{
-		Port:     portB,
-		StateDir: stateB,
-		PeerName: "alarm-a",
-		PeerPort: portA,
+		Port:       portB,
+		ListenAddr: healthListenAddr,
+		StateDir:   stateB,
+		PeerName:   "alarm-a",
+		PeerPort:   portA,
 	})
 	if err != nil {
 		return err
@@ -329,18 +336,45 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("adhd MCP readiness: %w", readyErr)
 	}
 
+	// --- Start discovery (fixed port + mDNS) --------------------------------
+	host := outboundIP()
+	clusterInfo := ClusterInfo{
+		AlarmA:  fmt.Sprintf("http://%s:%d", host, portA),
+		AlarmB:  fmt.Sprintf("http://%s:%d", host, portB),
+		AdhdMCP: fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
+	}
+
+	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
+	if discoveryErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: discovery endpoint unavailable: %v\n", discoveryErr)
+	} else {
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer shutdownCancel()
+			_ = discoverySrv.Shutdown(shutdownCtx)
+		}()
+	}
+
+	mdnsSrv, mdnsErr := registerMDNS(clusterInfo)
+	if mdnsErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
+	} else {
+		defer mdnsSrv.Shutdown()
+	}
+
 	// --- Print summary ------------------------------------------------------
 	fmt.Printf(`
 lezz demo cluster ready
 
-alarm-a   http://127.0.0.1:%d/status
-alarm-b   http://127.0.0.1:%d/status
-adhd MCP  http://127.0.0.1:%d/mcp
+alarm-a      %s/status
+alarm-b      %s/status
+adhd MCP     %s
+discovery    http://%s:%d/cluster
 
 connect dashboard:  adhd --config %s
 
 Ctrl+C to stop
-`, portA, portB, adhdPort, stableConfigPath)
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, host, DiscoveryPort, stableConfigPath)
 
 	// --- Wait for shutdown signal -------------------------------------------
 	sigCh := make(chan os.Signal, 1)
