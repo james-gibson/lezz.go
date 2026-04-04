@@ -17,6 +17,32 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
+// startProcess finds a managed tool binary and starts it with stdout/stderr
+// redirected to logFile. Unlike tools.Start, the terminal is not polluted by
+// child process output (TUI escape codes, color sequences, etc.).
+func startProcess(name string, args []string, logFile string) (*exec.Cmd, error) {
+	binary, err := tools.Find(name)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // logFile is constructed from a temp dir under our control
+	if err != nil {
+		return nil, fmt.Errorf("open log file %s: %w", logFile, err)
+	}
+
+	cmd := exec.Command(binary, args...) //nolint:gosec // binary path is resolved via tools.Find()
+	cmd.Stdout = f
+	cmd.Stderr = f
+	if err := cmd.Start(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("start %s: %w", name, err)
+	}
+	// Close our copy of the file descriptor — the child process holds its own.
+	_ = f.Close()
+	return cmd, nil
+}
+
 func clusterName() string {
 	return fmt.Sprintf("demo-%d", os.Getpid())
 }
@@ -211,6 +237,30 @@ func waitReady(ctx context.Context, url string) error {
 	}
 }
 
+// waitPortOpen dials addr (host:port) repeatedly until a TCP connection
+// succeeds or the deadline is reached. Used for services whose HTTP endpoints
+// are not suitable for readiness polling (e.g. SSE streams that never close).
+func waitPortOpen(ctx context.Context, addr string) error {
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for %s to open", addr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // killProcess sends SIGTERM to a process if it is still running.
 func killProcess(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
@@ -322,16 +372,18 @@ func Run(ctx context.Context) error {
 	}
 	defer func() { _ = os.Remove(stableConfigPath) }()
 
+	alarmALogPath := tmpRoot + "/alarm-a.log"
+	alarmBLogPath := tmpRoot + "/alarm-b.log"
 	adhdLogPath := tmpRoot + "/adhd.log"
 
 	// --- Start ocd-smoke-alarm instances ------------------------------------
-	cmdA, err := tools.Start("ocd-smoke-alarm", []string{"serve", "-config", configA})
+	cmdA, err := startProcess("ocd-smoke-alarm", []string{"serve", "-config", configA}, alarmALogPath)
 	if err != nil {
 		return fmt.Errorf("start alarm-a: %w", err)
 	}
 	defer killProcess(cmdA)
 
-	cmdB, err := tools.Start("ocd-smoke-alarm", []string{"serve", "-config", configB})
+	cmdB, err := startProcess("ocd-smoke-alarm", []string{"serve", "-config", configB}, alarmBLogPath)
 	if err != nil {
 		return fmt.Errorf("start alarm-b: %w", err)
 	}
@@ -349,21 +401,23 @@ func Run(ctx context.Context) error {
 
 	// --- Start adhd headless ------------------------------------------------
 	smokeAlarmURL := fmt.Sprintf("http://127.0.0.1:%d", portA)
-	cmdADHD, err := tools.Start("adhd", []string{
+	cmdADHD, err := startProcess("adhd", []string{
 		"--headless",
 		"--config", adhdConfigPath,
 		"--log", adhdLogPath,
 		"--mcp-addr", fmt.Sprintf(":%d", adhdPort),
 		"--smoke-alarm", smokeAlarmURL,
-	})
+	}, adhdLogPath)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
 	defer killProcess(cmdADHD)
 
 	// --- Poll adhd MCP readiness --------------------------------------------
+	// GET /mcp is an SSE endpoint that never closes, so HTTP-based readiness
+	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
-	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/mcp", adhdPort)); readyErr != nil {
+	if readyErr := waitPortOpen(ctx, fmt.Sprintf("127.0.0.1:%d", adhdPort)); readyErr != nil {
 		return fmt.Errorf("adhd MCP readiness: %w", readyErr)
 	}
 
@@ -416,8 +470,13 @@ discovery    http://%s:%d/cluster
 
 connect dashboard:  adhd --config %s
 
+logs         %s
+             %s
+             %s
+
 Ctrl+C to stop
-`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, host, DiscoveryPort, stableConfigPath)
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, host, DiscoveryPort, stableConfigPath,
+		alarmALogPath, alarmBLogPath, adhdLogPath)
 
 	// --- Wait for shutdown signal -------------------------------------------
 	sigCh := make(chan os.Signal, 1)
