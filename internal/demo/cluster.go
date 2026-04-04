@@ -3,6 +3,7 @@ package demo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -218,6 +219,46 @@ func killProcess(cmd *exec.Cmd) {
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 }
 
+// isotopeListEntry mirrors the record returned by smoke-alarm's /isotope/list endpoint.
+type isotopeListEntry struct {
+	Name      string `json:"name"`
+	TrustRung int    `json:"trust_rung"`
+	RungName  string `json:"rung_name"`
+}
+
+// queryIsotopeTrust fetches the isotope list from the smoke-alarm health server
+// and returns a human-readable trust summary string.
+func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
+	url := smokeAlarmURL + "/isotope/list"
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return "unavailable"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "unavailable"
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var entries []isotopeListEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil || len(entries) == 0 {
+		return "none registered"
+	}
+
+	result := ""
+	for _, e := range entries {
+		if result != "" {
+			result += ", "
+		}
+		result += fmt.Sprintf("%s rung %d (%s)", e.Name, e.TrustRung, e.RungName)
+	}
+	return result
+}
+
 // Run launches a self-contained demo cluster and blocks until Ctrl+C or the
 // context is canceled.
 func Run(ctx context.Context) error {
@@ -323,11 +364,13 @@ func Run(ctx context.Context) error {
 	}
 
 	// --- Start adhd headless ------------------------------------------------
+	smokeAlarmURL := fmt.Sprintf("http://127.0.0.1:%d", portA)
 	cmdADHD, err := tools.Start("adhd", []string{
 		"--headless",
 		"--config", adhdConfigPath,
 		"--log", adhdLogPath,
 		"--mcp-addr", fmt.Sprintf(":%d", adhdPort),
+		"--smoke-alarm", smokeAlarmURL,
 	})
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
@@ -374,6 +417,9 @@ func Run(ctx context.Context) error {
 		}
 	}
 
+	// --- Query isotope trust level from alarm-a -----------------------------
+	trustSummary := queryIsotopeTrust(ctx, smokeAlarmURL)
+
 	// --- Print summary ------------------------------------------------------
 	fmt.Printf(`
 lezz demo cluster ready
@@ -381,12 +427,13 @@ lezz demo cluster ready
 alarm-a      %s/status
 alarm-b      %s/status
 adhd MCP     %s
+isotopes     %s
 discovery    http://%s:%d/cluster
 
 connect dashboard:  adhd --config %s
 
 Ctrl+C to stop
-`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, host, DiscoveryPort, stableConfigPath)
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, host, DiscoveryPort, stableConfigPath)
 
 	// --- Wait for shutdown signal -------------------------------------------
 	sigCh := make(chan os.Signal, 1)
