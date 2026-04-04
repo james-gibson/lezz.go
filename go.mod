@@ -5,7 +5,7 @@ go 1.24.11
 require (
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/grandcat/zeroconf v1.0.0
-	github.com/james-gibson/isotope v0.1.0
+	github.com/james-gibson/isotope v0.2.0
 )
 
 require (
