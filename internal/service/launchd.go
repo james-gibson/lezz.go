@@ -122,15 +122,15 @@ func Remove(t tools.Tool, p tools.DaemonProfile) error {
 	return nil
 }
 
-// ServiceInfo describes an installed lezz-managed launchd service.
-type ServiceInfo struct {
+// Info describes an installed lezz-managed launchd service.
+type Info struct {
 	Label     string
 	PlistPath string
 	Running   bool // true if launchctl reports the service is loaded and running
 }
 
 // List returns all lezz-managed services currently installed in ~/Library/LaunchAgents.
-func List() ([]ServiceInfo, error) {
+func List() ([]Info, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, fmt.Errorf("service list is only supported on macOS (got %s)", runtime.GOOS)
 	}
@@ -145,7 +145,7 @@ func List() ([]ServiceInfo, error) {
 		return nil, fmt.Errorf("read LaunchAgents dir: %w", err)
 	}
 
-	var services []ServiceInfo
+	var services []Info
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -157,7 +157,7 @@ func List() ([]ServiceInfo, error) {
 		label := strings.TrimSuffix(name, ".plist")
 		plistPath := filepath.Join(dir, name)
 		running := isRunning(label)
-		services = append(services, ServiceInfo{Label: label, PlistPath: plistPath, Running: running})
+		services = append(services, Info{Label: label, PlistPath: plistPath, Running: running})
 	}
 	return services, nil
 }
