@@ -162,13 +162,27 @@ func cmdStart() {
 	}
 }
 
-// lezz service install|remove <tool> [profile]
+// lezz service install|remove|list|purge [tool] [profile]
 func cmdService() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove|list|purge [tool] [profile]")
+		os.Exit(1)
+	}
+	action := os.Args[2]
+
+	switch action {
+	case "list":
+		cmdServiceList()
+		return
+	case "purge":
+		cmdServicePurge()
+		return
+	}
+
 	if len(os.Args) < 4 {
 		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove <tool> [profile]")
 		os.Exit(1)
 	}
-	action := os.Args[2]
 	toolName := os.Args[3]
 	profileName := "idle"
 	if len(os.Args) >= 5 {
@@ -221,6 +235,48 @@ func cmdService() {
 		fmt.Fprintf(os.Stderr, "unknown service action %q; use install or remove\n", action)
 		os.Exit(1)
 	}
+}
+
+func cmdServiceList() {
+	services, err := service.List()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "service list failed:", err)
+		os.Exit(1)
+	}
+	if len(services) == 0 {
+		fmt.Println("no lezz-managed services installed")
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	_, _ = fmt.Fprintln(w, "LABEL\tSTATUS\tPLIST")
+	for _, svc := range services {
+		status := "stopped"
+		if svc.Running {
+			status = "running"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", svc.Label, status, svc.PlistPath)
+	}
+	_ = w.Flush()
+}
+
+func cmdServicePurge() {
+	services, err := service.List()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "service purge failed:", err)
+		os.Exit(1)
+	}
+	if len(services) == 0 {
+		fmt.Println("no lezz-managed services to remove")
+		return
+	}
+	for _, svc := range services {
+		fmt.Printf("removing %s ...\n", svc.Label)
+	}
+	if err := service.Purge(); err != nil {
+		fmt.Fprintln(os.Stderr, "service purge failed:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("removed %d service(s)\n", len(services))
 }
 
 func cmdVersion() {
@@ -303,8 +359,10 @@ Usage:
   lezz start <tool> [args...]        Spawn the tool as a child process (wait)
   lezz install <tool>                Download and install a managed tool
   lezz update                        Check for and apply lezz self-update
-  lezz service install <tool>        Configure systemd/cron for a tool
+  lezz service install <tool>        Configure launchd service for a tool
   lezz service remove <tool>         Remove daemon config for a tool
+  lezz service list                  List all installed lezz services
+  lezz service purge                 Unload and remove all lezz services
   lezz version                       Print version
 
 Managed tools: lezz, adhd, ocd-smoke-alarm, tuner

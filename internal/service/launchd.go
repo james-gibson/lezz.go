@@ -122,6 +122,77 @@ func Remove(t tools.Tool, p tools.DaemonProfile) error {
 	return nil
 }
 
+// ServiceInfo describes an installed lezz-managed launchd service.
+type ServiceInfo struct {
+	Label    string
+	PlistPath string
+	Running  bool // true if launchctl reports the service is loaded and running
+}
+
+// List returns all lezz-managed services currently installed in ~/Library/LaunchAgents.
+func List() ([]ServiceInfo, error) {
+	if runtime.GOOS != "darwin" {
+		return nil, fmt.Errorf("service list is only supported on macOS (got %s)", runtime.GOOS)
+	}
+
+	dir, err := launchAgentsDir()
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read LaunchAgents dir: %w", err)
+	}
+
+	var services []ServiceInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "com.james-gibson.") || !strings.HasSuffix(name, ".plist") {
+			continue
+		}
+		label := strings.TrimSuffix(name, ".plist")
+		plistPath := filepath.Join(dir, name)
+		running := isRunning(label)
+		services = append(services, ServiceInfo{Label: label, PlistPath: plistPath, Running: running})
+	}
+	return services, nil
+}
+
+// Purge unloads and removes all lezz-managed services. It attempts every
+// service and returns a combined error for any that fail.
+func Purge() error {
+	services, err := List()
+	if err != nil {
+		return err
+	}
+
+	var errs []string
+	for _, svc := range services {
+		_ = exec.Command("launchctl", "unload", svc.PlistPath).Run() //nolint:gosec // path is derived from trusted home dir
+		if rmErr := os.Remove(svc.PlistPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			errs = append(errs, fmt.Sprintf("remove %s: %v", svc.Label, rmErr))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("purge errors:\n  %s", strings.Join(errs, "\n  "))
+	}
+	return nil
+}
+
+// isRunning reports whether launchctl considers the label loaded.
+func isRunning(label string) bool {
+	out, err := exec.Command("launchctl", "list", label).CombinedOutput() //nolint:gosec // label is derived from trusted source
+	if err != nil {
+		return false
+	}
+	// launchctl list <label> exits 0 and prints JSON when the service is loaded.
+	return len(out) > 0
+}
+
 // PlistPath returns the expected plist path for a tool/profile pair.
 func PlistPath(t tools.Tool, p tools.DaemonProfile) (string, error) {
 	dir, err := launchAgentsDir()
