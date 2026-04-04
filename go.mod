@@ -5,7 +5,7 @@ go 1.24.11
 require (
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/grandcat/zeroconf v1.0.0
-	github.com/james-gibson/isotope v0.0.0
+	github.com/james-gibson/isotope v0.1.0
 )
 
 require (
@@ -30,5 +30,3 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/james-gibson/isotope => /Users/james/src/prototypes/isotope
