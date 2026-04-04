@@ -20,6 +20,13 @@ var Registry = []Tool{
 	{
 		Name:       "lezz",
 		GithubSlug: "james-gibson/lezz.go",
+		Profiles: []DaemonProfile{
+			{
+				Name:        "demo",
+				Description: "self-contained demo cluster — 2 smoke-alarm instances + adhd headless",
+				Args:        []string{"demo"},
+			},
+		},
 	},
 	{
 		Name:       "adhd",

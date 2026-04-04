@@ -198,13 +198,8 @@ func cmdService() {
 
 	switch action {
 	case "install":
-		binDir, err := tools.BinDir()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "cannot locate bin dir:", err)
-			os.Exit(1)
-		}
-		binPath := filepath.Join(binDir, t.Name)
-		if _, err := os.Stat(binPath); err != nil {
+		binPath := resolveBinPath(t.Name)
+		if binPath == "" {
 			fmt.Fprintf(os.Stderr, "%s is not installed — run: lezz install %s\n", t.Name, t.Name)
 			os.Exit(1)
 		}
@@ -270,6 +265,24 @@ func toolVersionStr(binPath string) string {
 		return "unknown"
 	}
 	return line
+}
+
+// resolveBinPath returns the absolute path to a managed tool binary.
+// For "lezz" itself it falls back to os.Executable() so the running binary
+// can be daemonised even before it has been installed into ~/.lezz/bin.
+func resolveBinPath(name string) string {
+	if binDir, err := tools.BinDir(); err == nil {
+		p := filepath.Join(binDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if name == "lezz" {
+		if p, err := os.Executable(); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 func isOnPath(dir string) bool {
