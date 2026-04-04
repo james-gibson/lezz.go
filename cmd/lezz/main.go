@@ -150,16 +150,17 @@ func cmdVersion() {
 	_, _ = fmt.Fprintln(w, "TOOL\tVERSION\tDAEMON")
 	for _, t := range tools.Registry {
 		var toolVersion string
-		if t.Name == "lezz" {
+		switch {
+		case t.Name == "lezz":
 			toolVersion = version
-		} else if binDir != "" {
+		case binDir != "":
 			binPath := filepath.Join(binDir, t.Name)
 			if _, err := os.Stat(binPath); err == nil {
 				toolVersion = toolVersionStr(binPath)
 			} else {
 				toolVersion = "not installed"
 			}
-		} else {
+		default:
 			toolVersion = "not installed"
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, toolVersion, "not configured")
