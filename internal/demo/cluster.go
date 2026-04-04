@@ -16,6 +16,51 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
+// stableDemoConfigPath returns ~/.lezz/demo-adhd.yaml, creating the parent dir.
+func stableDemoConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("home dir: %w", err)
+	}
+	dir := home + "/.lezz"
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("create .lezz dir: %w", err)
+	}
+	return dir + "/demo-adhd.yaml", nil
+}
+
+// copyFile copies src to dst, creating or truncating dst.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src) //nolint:gosec // src is a path we just wrote in a temp dir we control
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := in.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if readErr != nil {
+			if readErr.Error() == "EOF" {
+				break
+			}
+			return readErr
+		}
+	}
+	return nil
+}
+
 // freePort pre-allocates a free TCP port and returns it.
 // The listener is closed immediately so the port can be reused.
 func freePort() (int, error) {
@@ -230,6 +275,16 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	// Also write to a stable path so the dashboard can always find the cluster.
+	stableConfigPath, err := stableDemoConfigPath()
+	if err != nil {
+		return fmt.Errorf("resolve stable config path: %w", err)
+	}
+	if err := copyFile(adhdConfigPath, stableConfigPath); err != nil {
+		return fmt.Errorf("write stable adhd config: %w", err)
+	}
+	defer func() { _ = os.Remove(stableConfigPath) }()
+
 	adhdLogPath := tmpRoot + "/adhd.log"
 
 	// --- Start ocd-smoke-alarm instances ------------------------------------
@@ -281,8 +336,10 @@ alarm-a   http://127.0.0.1:%d/status
 alarm-b   http://127.0.0.1:%d/status
 adhd MCP  http://127.0.0.1:%d/mcp
 
+connect dashboard:  adhd --config %s
+
 Ctrl+C to stop
-`, portA, portB, adhdPort)
+`, portA, portB, adhdPort, stableConfigPath)
 
 	// --- Wait for shutdown signal -------------------------------------------
 	sigCh := make(chan os.Signal, 1)
