@@ -285,6 +285,22 @@ func cmdVersion() {
 
 	binDir, _ := tools.BinDir()
 
+	// Build tool → "profile (status)" strings from installed services.
+	daemonStatus := map[string][]string{}
+	if svcs, err := service.List(); err == nil {
+		for _, svc := range svcs {
+			tool, profile, ok := service.ParseLabel(svc.Label)
+			if !ok {
+				continue
+			}
+			status := "stopped"
+			if svc.Running {
+				status = "running"
+			}
+			daemonStatus[tool] = append(daemonStatus[tool], profile+" ("+status+")")
+		}
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TOOL\tVERSION\tDAEMON")
 	for _, t := range tools.Registry {
@@ -302,7 +318,11 @@ func cmdVersion() {
 		default:
 			toolVersion = "not installed"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, toolVersion, "not configured")
+		daemon := "not configured"
+		if entries := daemonStatus[t.Name]; len(entries) > 0 {
+			daemon = strings.Join(entries, ", ")
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, toolVersion, daemon)
 	}
 	_ = w.Flush()
 }

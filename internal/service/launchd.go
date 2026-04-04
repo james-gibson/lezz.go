@@ -15,6 +15,7 @@ import (
 )
 
 const launchdLabel = "co.james-gibson.lab.%s.%s" // co.james-gibson.lab.<tool>.<profile>
+const labelPrefix = "co.james-gibson.lab."
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -151,7 +152,7 @@ func List() ([]Info, error) {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasPrefix(name, "co.james-gibson.lab.") || !strings.HasSuffix(name, ".plist") {
+		if !strings.HasPrefix(name, labelPrefix) || !strings.HasSuffix(name, ".plist") {
 			continue
 		}
 		label := strings.TrimSuffix(name, ".plist")
@@ -201,6 +202,22 @@ func PlistPath(t tools.Tool, p tools.DaemonProfile) (string, error) {
 	}
 	label := fmt.Sprintf(launchdLabel, t.Name, p.Name)
 	return filepath.Join(dir, label+".plist"), nil
+}
+
+// ParseLabel extracts the tool and profile name from a lezz launchd label.
+// Returns ok=false if the label does not match the expected format.
+func ParseLabel(label string) (tool, profile string, ok bool) {
+	body, found := strings.CutPrefix(label, labelPrefix)
+	if !found {
+		return "", "", false
+	}
+	// body is "<tool>.<profile>"; split on the last dot so tool names with
+	// hyphens (e.g. "ocd-smoke-alarm") are preserved correctly.
+	idx := strings.LastIndex(body, ".")
+	if idx < 0 {
+		return "", "", false
+	}
+	return body[:idx], body[idx+1:], true
 }
 
 func launchAgentsDir() (string, error) {
