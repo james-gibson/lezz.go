@@ -72,7 +72,7 @@ func Install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
 		return fmt.Errorf("parse plist template: %w", err)
 	}
 
-	f, err := os.Create(plistPath)
+	f, err := os.OpenFile(plistPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is derived from os.UserHomeDir + a fixed subdirectory
 	if err != nil {
 		return fmt.Errorf("create plist %s: %w", plistPath, err)
 	}
@@ -88,9 +88,9 @@ func Install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
 	}
 
 	// Unload first in case a previous version is running, ignore errors.
-	_ = exec.Command("launchctl", "unload", plistPath).Run()
+	_ = exec.Command("launchctl", "unload", plistPath).Run() //nolint:gosec // plistPath is derived from trusted home dir
 
-	if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil { //nolint:gosec // same
 		return fmt.Errorf("launchctl load: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
@@ -111,7 +111,7 @@ func Remove(t tools.Tool, p tools.DaemonProfile) error {
 	label := fmt.Sprintf(launchdLabel, t.Name, p.Name)
 	plistPath := filepath.Join(plistDir, label+".plist")
 
-	if out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput(); err != nil { //nolint:gosec // plistPath is derived from trusted home dir
 		return fmt.Errorf("launchctl unload: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
@@ -138,7 +138,7 @@ func launchAgentsDir() (string, error) {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
 	dir := filepath.Join(home, "Library", "LaunchAgents")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create LaunchAgents dir: %w", err)
 	}
 	return dir, nil
@@ -150,7 +150,7 @@ func logDir() (string, error) {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
 	dir := filepath.Join(home, ".lezz", "logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create log dir: %w", err)
 	}
 	return dir, nil
