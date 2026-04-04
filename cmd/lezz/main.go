@@ -72,6 +72,10 @@ func main() {
 	case "start":
 		cmdStart()
 
+	case "purge":
+		cmdPurge(ctx)
+		cancel()
+
 	case "version":
 		cmdVersion()
 
@@ -260,6 +264,62 @@ func cmdService() {
 	}
 }
 
+// cmdPurge removes all lezz-managed state:
+//  1. Stops and removes all launchd services.
+//  2. Deletes managed binaries from ~/.lezz/bin.
+//  3. Clears Go build-cache entries for managed modules (go clean -cache).
+//  4. Removes module download cache entries for managed modules (go clean -modcache equivalent).
+//
+// This is a full reset — re-run `lezz install <tool>` to reinstall.
+func cmdPurge(ctx context.Context) {
+	// 1. Stop + remove launchd services.
+	services, err := service.List()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "purge: list services:", err)
+	} else if len(services) > 0 {
+		fmt.Printf("removing %d service(s)...\n", len(services))
+		for _, svc := range services {
+			fmt.Printf("  %s\n", svc.Label)
+		}
+		if err := service.Purge(); err != nil {
+			fmt.Fprintln(os.Stderr, "purge: service purge:", err)
+		}
+	}
+
+	// 2. Remove managed binaries from ~/.lezz/bin.
+	fmt.Println("removing managed binaries...")
+	result, err := tools.PurgeBins()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "purge: remove bins:", err)
+		os.Exit(1)
+	}
+	for _, name := range result.BinsRemoved {
+		fmt.Printf("  removed ~/.lezz/bin/%s\n", name)
+	}
+	for _, name := range result.BinsMissing {
+		fmt.Printf("  (not installed: %s)\n", name)
+	}
+
+	// 3. Clear Go build-cache entries for managed module packages.
+	fmt.Println("clearing Go build cache for managed modules...")
+	cacheResult := tools.PurgeGoCache(ctx)
+	for _, e := range cacheResult.GoCacheErrors {
+		fmt.Fprintln(os.Stderr, "purge: go clean -cache:", e)
+	}
+
+	// 4. Remove module download cache entries for managed modules.
+	fmt.Println("clearing Go module cache for managed modules...")
+	modResult := tools.PurgeModCache(ctx)
+	for _, removed := range modResult.BinsRemoved {
+		fmt.Printf("  removed %s\n", removed)
+	}
+	for _, e := range modResult.GoCacheErrors {
+		fmt.Fprintln(os.Stderr, "purge: mod cache:", e)
+	}
+
+	fmt.Println("done — run `lezz install <tool>` to reinstall")
+}
+
 func cmdServiceList() {
 	services, err := service.List()
 	if err != nil {
@@ -401,6 +461,7 @@ Usage:
   lezz run <tool> [args...]          Replace lezz with the tool (exec)
   lezz start <tool> [args...]        Spawn the tool as a child process (wait)
   lezz install <tool>                Download and install a managed tool
+  lezz purge                         Remove services, binaries, and Go caches for all managed tools
   lezz update                        Check for and apply lezz self-update
   lezz service install <tool>        Configure launchd service for a tool
   lezz service remove <tool>         Remove daemon config for a tool
