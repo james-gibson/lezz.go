@@ -88,10 +88,8 @@ func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (version strin
 // Install places the tool binary in ~/.lezz/bin/<name>.
 //
 // Strategy selection:
-//   - If Go is available: go install <slug>/cmd/<name>@latest, then symlink
-//     GOPATH/bin/<name> → ~/.lezz/bin/<name> so future `go install` runs are
-//     picked up automatically.
-//   - Otherwise: download the pre-built GitHub release asset directly.
+//  1. Download the pre-built GitHub release asset (same source as `lezz update`).
+//  2. If no release is found and Go is available, fall back to go install.
 func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	binDir, err := BinDir()
 	if err != nil {
@@ -101,10 +99,15 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 		return "", fmt.Errorf("create bin dir: %w", err)
 	}
 
-	if _, err := exec.LookPath("go"); err == nil {
+	ver, err = installViaFetcher(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool.Name, binDir)
+	if err == nil {
+		return ver, nil
+	}
+
+	if _, goErr := exec.LookPath("go"); goErr == nil {
 		return installViaGoInstall(ctx, tool, binDir)
 	}
-	return installViaFetcher(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool.Name, binDir)
+	return "", err
 }
 
 // installViaGoInstall runs `go install <slug>/cmd/<name>@latest` and symlinks
