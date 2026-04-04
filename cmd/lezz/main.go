@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"text/tabwriter"
 
@@ -16,7 +17,29 @@ import (
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
-const version = "dev"
+// buildVersion is set at build time by goreleaser via
+// -ldflags "-X main.buildVersion={{.Version}}".
+var buildVersion string
+
+func version() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	v := bi.Main.Version
+	if v == "" || v == "(devel)" {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 8 {
+				return s.Value[:8]
+			}
+		}
+		return "dev"
+	}
+	return v
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -117,21 +140,21 @@ func cmdInstall(ctx context.Context) {
 
 // lezz update
 func cmdUpdate(ctx context.Context) {
-	fmt.Printf("lezz %s — checking for updates...\n", version)
+	fmt.Printf("lezz %s — checking for updates...\n", version())
 
-	latest, hasUpdate, err := selfupdate.Check(ctx, version)
+	latest, hasUpdate, err := selfupdate.Check(ctx, version())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "update check failed:", err)
 		os.Exit(1)
 	}
 
 	if !hasUpdate {
-		fmt.Printf("already up to date (%s)\n", version)
+		fmt.Printf("already up to date (%s)\n", version())
 		return
 	}
 
 	fmt.Printf("new version available: %s → applying...\n", latest)
-	applied, err := selfupdate.Apply(ctx, version)
+	applied, err := selfupdate.Apply(ctx, version())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "update failed:", err)
 		os.Exit(1)
@@ -280,7 +303,7 @@ func cmdServicePurge() {
 }
 
 func cmdVersion() {
-	fmt.Println("lezz", version)
+	fmt.Println("lezz", version())
 	fmt.Println()
 
 	binDir, _ := tools.BinDir()
@@ -307,7 +330,7 @@ func cmdVersion() {
 		var toolVersion string
 		switch {
 		case t.Name == "lezz":
-			toolVersion = version
+			toolVersion = version()
 		case binDir != "":
 			binPath := filepath.Join(binDir, t.Name)
 			if _, err := os.Stat(binPath); err == nil {
