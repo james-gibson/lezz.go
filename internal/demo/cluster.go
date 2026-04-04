@@ -37,7 +37,7 @@ func copyFile(src, dst string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst is ~/.lezz/demo-adhd.yaml under our control
 	if err != nil {
 		return err
 	}
@@ -280,8 +280,9 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve stable config path: %w", err)
 	}
-	if err := copyFile(adhdConfigPath, stableConfigPath); err != nil {
-		return fmt.Errorf("write stable adhd config: %w", err)
+	copyErr := copyFile(adhdConfigPath, stableConfigPath)
+	if copyErr != nil {
+		return fmt.Errorf("write stable adhd config: %w", copyErr)
 	}
 	defer func() { _ = os.Remove(stableConfigPath) }()
 
