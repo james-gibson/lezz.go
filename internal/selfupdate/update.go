@@ -15,7 +15,7 @@ const slug = "james-gibson/lezz.go"
 // can parse (must start with a digit after an optional "v" prefix).
 func isValidSemver(v string) bool {
 	v = strings.TrimPrefix(v, "v")
-	return len(v) > 0 && v[0] >= '0' && v[0] <= '9'
+	return v != "" && v[0] >= '0' && v[0] <= '9'
 }
 
 // newUpdater creates an unauthenticated updater for public GitHub repos.
