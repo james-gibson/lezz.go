@@ -95,8 +95,8 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(binDir, 0o750); err != nil {
-		return "", fmt.Errorf("create bin dir: %w", err)
+	if mkErr := os.MkdirAll(binDir, 0o750); mkErr != nil {
+		return "", fmt.Errorf("create bin dir: %w", mkErr)
 	}
 
 	ver, err = installViaFetcher(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool.Name, binDir)

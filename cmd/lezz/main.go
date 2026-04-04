@@ -145,7 +145,7 @@ func cmdVersion() {
 	binDir, _ := tools.BinDir()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "TOOL\tINSTALLED\tDAEMON")
+	_, _ = fmt.Fprintln(w, "TOOL\tINSTALLED\tDAEMON")
 	for _, t := range tools.Registry {
 		installed := "no"
 		if binDir != "" {
@@ -153,9 +153,9 @@ func cmdVersion() {
 				installed = "yes"
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, installed, "not configured")
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", t.Name, installed, "not configured")
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func isOnPath(dir string) bool {
