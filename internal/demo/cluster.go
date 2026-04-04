@@ -273,28 +273,41 @@ func killProcess(cmd *exec.Cmd) {
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 }
 
-// queryIsotopeTrust fetches the isotope list from the smoke-alarm health server
-// and returns a human-readable trust summary string.
+// queryIsotopeTrust polls the isotope list from the smoke-alarm health server
+// until at least one entry appears or the deadline is reached. The poll exists
+// because headless adhd registers itself after its MCP port opens, so the TCP
+// readiness check does not guarantee the registration has arrived yet.
 func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	client := isotope.NewClient(smokeAlarmURL)
+	for {
+		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		entries, err := client.List(reqCtx)
+		cancel()
 
-	entries, err := isotope.NewClient(smokeAlarmURL).List(reqCtx)
-	if err != nil || len(entries) == 0 {
-		if err != nil {
+		if err == nil && len(entries) > 0 {
+			result := ""
+			for _, e := range entries {
+				if result != "" {
+					result += ", "
+				}
+				result += fmt.Sprintf("%s rung %d (%s)", e.Name, e.TrustRung, e.RungName)
+			}
+			return result
+		}
+
+		if time.Now().After(deadline) {
+			if err != nil {
+				return "unavailable"
+			}
+			return "none registered"
+		}
+		select {
+		case <-ctx.Done():
 			return "unavailable"
+		case <-time.After(500 * time.Millisecond):
 		}
-		return "none registered"
 	}
-
-	result := ""
-	for _, e := range entries {
-		if result != "" {
-			result += ", "
-		}
-		result += fmt.Sprintf("%s rung %d (%s)", e.Name, e.TrustRung, e.RungName)
-	}
-	return result
 }
 
 // Run launches a self-contained demo cluster and blocks until Ctrl+C or the
