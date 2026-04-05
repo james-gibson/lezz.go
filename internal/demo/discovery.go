@@ -21,14 +21,22 @@ const DiscoveryPort = 19100
 const mdnsService = "_lezz-demo._tcp"
 const mdnsDomain = "local."
 
+// ProjectEntry describes a project within a cluster that exposes an MCP server.
+type ProjectEntry struct {
+	Name   string `json:"name"`    // short name, e.g. "tuner", "adhd"
+	Repo   string `json:"repo"`    // GitHub slug, e.g. "james-gibson/tuner"
+	MCPURL string `json:"mcp_url"` // base URL of the project's MCP server
+}
+
 // ClusterInfo describes a running demo cluster.
 // Name uniquely identifies it within a registry (defaults to "demo-<pid>").
 type ClusterInfo struct {
-	Name        string   `json:"name"`
-	AlarmA      string   `json:"alarm_a"`
-	AlarmB      string   `json:"alarm_b"`
-	AdhdMCP     string   `json:"adhd_mcp"`
-	GithubRepos []string `json:"github_repos,omitempty"`
+	Name        string         `json:"name"`
+	AlarmA      string         `json:"alarm_a"`
+	AlarmB      string         `json:"alarm_b"`
+	AdhdMCP     string         `json:"adhd_mcp"`
+	GithubRepos []string       `json:"github_repos,omitempty"`
+	Projects    []ProjectEntry `json:"projects,omitempty"`
 }
 
 // registry holds the set of registered clusters, safe for concurrent use.

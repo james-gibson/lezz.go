@@ -332,6 +332,17 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 	if len(newCluster.GithubRepos) > 0 {
 		joinParams["github_repos"] = newCluster.GithubRepos
 	}
+	if len(newCluster.Projects) > 0 {
+		projs := make([]map[string]interface{}, 0, len(newCluster.Projects))
+		for _, p := range newCluster.Projects {
+			projs = append(projs, map[string]interface{}{
+				"name":    p.Name,
+				"repo":    p.Repo,
+				"mcp_url": p.MCPURL,
+			})
+		}
+		joinParams["projects"] = projs
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
