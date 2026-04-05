@@ -43,27 +43,19 @@ func PurgeBins() (PurgeResult, error) {
 	return r, nil
 }
 
-// PurgeGoCache runs `go clean -cache <module>/...` for each managed tool's
-// module, removing build cache entries for those packages. Non-fatal: errors
-// are collected in GoCacheErrors rather than aborting.
+// PurgeGoCache runs `go clean -cache` to clear the entire Go build cache.
+// go clean -cache does not support per-package filtering, so this always
+// clears the full cache. Non-fatal: errors are collected in GoCacheErrors.
 //
 // This does not touch the module download cache (go clean -modcache); that
 // is a heavier operation the caller can opt into separately.
 func PurgeGoCache(ctx context.Context) PurgeResult {
 	var r PurgeResult
-	for _, t := range Registry {
-		if t.Name == "lezz" || t.GithubSlug == "" {
-			continue // lezz manages itself; don't clean its own cache
-		}
-		// Module import path: github.com/<slug>/...
-		// GithubSlug is "owner/repo" so module root is github.com/owner/repo.
-		pkg := "github.com/" + t.GithubSlug + "/..."
-		cmd := exec.CommandContext(ctx, "go", "clean", "-cache", pkg) //nolint:gosec // pkg is constructed from the registry slug
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			r.GoCacheErrors = append(r.GoCacheErrors, fmt.Errorf("go clean -cache %s: %w", pkg, err))
-		}
+	cmd := exec.CommandContext(ctx, "go", "clean", "-cache")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		r.GoCacheErrors = append(r.GoCacheErrors, fmt.Errorf("go clean -cache: %w", err))
 	}
 	return r
 }
