@@ -324,15 +324,19 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 		return
 	}
 
+	joinParams := map[string]interface{}{
+		"name":    newCluster.Name,
+		"alarm_a": newCluster.AlarmA,
+		"alarm_b": newCluster.AlarmB,
+	}
+	if len(newCluster.GithubRepos) > 0 {
+		joinParams["github_repos"] = newCluster.GithubRepos
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "adhd.cluster.join",
-		"params": map[string]interface{}{
-			"name":    newCluster.Name,
-			"alarm_a": newCluster.AlarmA,
-			"alarm_b": newCluster.AlarmB,
-		},
+		"params":  joinParams,
 	})
 	if err != nil {
 		return

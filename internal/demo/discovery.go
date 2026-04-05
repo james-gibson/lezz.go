@@ -24,10 +24,11 @@ const mdnsDomain = "local."
 // ClusterInfo describes a running demo cluster.
 // Name uniquely identifies it within a registry (defaults to "demo-<pid>").
 type ClusterInfo struct {
-	Name    string `json:"name"`
-	AlarmA  string `json:"alarm_a"`
-	AlarmB  string `json:"alarm_b"`
-	AdhdMCP string `json:"adhd_mcp"`
+	Name        string   `json:"name"`
+	AlarmA      string   `json:"alarm_a"`
+	AlarmB      string   `json:"alarm_b"`
+	AdhdMCP     string   `json:"adhd_mcp"`
+	GithubRepos []string `json:"github_repos,omitempty"`
 }
 
 // registry holds the set of registered clusters, safe for concurrent use.
