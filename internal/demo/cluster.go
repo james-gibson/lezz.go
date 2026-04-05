@@ -358,6 +358,7 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 		if c.Name == newCluster.Name || c.AdhdMCP == "" {
 			continue
 		}
+		// Push new cluster → existing ADHD.
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AdhdMCP, bytes.NewReader(payload))
 		if err != nil {
 			continue
@@ -367,6 +368,49 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 		if err == nil {
 			_ = resp.Body.Close()
 			fmt.Printf("notified ADHD at %s about cluster %s\n", c.AdhdMCP, newCluster.Name)
+		}
+
+		// Push existing cluster → new ADHD so both see each other.
+		if newCluster.AdhdMCP == "" {
+			continue
+		}
+		reverseParams := map[string]interface{}{
+			"name":    c.Name,
+			"alarm_a": c.AlarmA,
+			"alarm_b": c.AlarmB,
+		}
+		if len(c.GithubRepos) > 0 {
+			reverseParams["github_repos"] = c.GithubRepos
+		}
+		if len(c.Projects) > 0 {
+			projs := make([]map[string]interface{}, 0, len(c.Projects))
+			for _, p := range c.Projects {
+				projs = append(projs, map[string]interface{}{
+					"name":    p.Name,
+					"repo":    p.Repo,
+					"mcp_url": p.MCPURL,
+				})
+			}
+			reverseParams["projects"] = projs
+		}
+		reversePayload, err := json.Marshal(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "adhd.cluster.join",
+			"params":  reverseParams,
+		})
+		if err != nil {
+			continue
+		}
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, newCluster.AdhdMCP, bytes.NewReader(reversePayload))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			fmt.Printf("notified ADHD at %s about existing cluster %s\n", newCluster.AdhdMCP, c.Name)
 		}
 	}
 }
