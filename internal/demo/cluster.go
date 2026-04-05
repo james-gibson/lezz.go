@@ -325,9 +325,10 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 	}
 
 	joinParams := map[string]interface{}{
-		"name":    newCluster.Name,
-		"alarm_a": newCluster.AlarmA,
-		"alarm_b": newCluster.AlarmB,
+		"name":     newCluster.Name,
+		"alarm_a":  newCluster.AlarmA,
+		"alarm_b":  newCluster.AlarmB,
+		"adhd_mcp": newCluster.AdhdMCP,
 	}
 	if len(newCluster.GithubRepos) > 0 {
 		joinParams["github_repos"] = newCluster.GithubRepos
@@ -375,9 +376,10 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 			continue
 		}
 		reverseParams := map[string]interface{}{
-			"name":    c.Name,
-			"alarm_a": c.AlarmA,
-			"alarm_b": c.AlarmB,
+			"name":     c.Name,
+			"alarm_a":  c.AlarmA,
+			"alarm_b":  c.AlarmB,
+			"adhd_mcp": c.AdhdMCP,
 		}
 		if len(c.GithubRepos) > 0 {
 			reverseParams["github_repos"] = c.GithubRepos
