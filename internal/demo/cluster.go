@@ -2,7 +2,9 @@
 package demo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -310,6 +312,50 @@ func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
 	}
 }
 
+// notifyExistingADHD sends an adhd.cluster.join MCP call to all ADHD instances
+// listed in the local discovery registry, informing them about this newly-joined
+// cluster. Best-effort: individual failures are silently ignored.
+func notifyExistingADHD(newCluster ClusterInfo) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	existing, err := fetchAllClusters(ctx, fmt.Sprintf("http://127.0.0.1:%d/cluster", DiscoveryPort))
+	if err != nil {
+		return
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "adhd.cluster.join",
+		"params": map[string]interface{}{
+			"name":    newCluster.Name,
+			"alarm_a": newCluster.AlarmA,
+			"alarm_b": newCluster.AlarmB,
+		},
+	})
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, c := range existing {
+		if c.Name == newCluster.Name || c.AdhdMCP == "" {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AdhdMCP, bytes.NewReader(payload))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			fmt.Printf("notified ADHD at %s about cluster %s\n", c.AdhdMCP, newCluster.Name)
+		}
+	}
+}
+
 // Run launches a self-contained demo cluster and blocks until Ctrl+C or the
 // context is canceled.
 func Run(ctx context.Context) error {
@@ -469,6 +515,9 @@ func Run(ctx context.Context) error {
 		} else {
 			fmt.Printf("joined existing discovery registry as %s\n", clusterInfo.Name)
 			defer deregFn()
+			// Immediately push our cluster info to all existing ADHD MCP instances
+			// so their dashboards update without waiting for the next poll cycle.
+			notifyExistingADHD(clusterInfo)
 		}
 	}
 
