@@ -31,7 +31,7 @@ func isValidSemver(v string) bool {
 	// 14-digit UTC timestamp, e.g. "0.20260404234801".  Strip build metadata
 	// first, split on "-" into at most three parts, then check that the second
 	// part ends with a 14-digit timestamp (digits only after the last ".").
-	bare := strings.SplitN(v, "+", 2)[0] // strip "+..." if present
+	bare := strings.SplitN(v, "+", 2)[0]  // strip "+..." if present
 	parts := strings.SplitN(bare, "-", 3) // base, middle?, commit?
 	if len(parts) == 3 {
 		ts := parts[1]
