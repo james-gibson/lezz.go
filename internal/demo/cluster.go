@@ -101,7 +101,7 @@ func copyFile(src, dst string) error {
 // freePort pre-allocates a free TCP port and returns it.
 // The listener is closed immediately so the port can be reused.
 func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return 0, fmt.Errorf("allocate port: %w", err)
 	}
@@ -163,7 +163,7 @@ targets:
     enabled: true
     protocol: "http"
     name: "{{.PeerName}}"
-    endpoint: "http://127.0.0.1:{{.PeerPort}}"
+    endpoint: "http://localhost:{{.PeerPort}}"
     transport: "http"
     expected:
       healthy_status_codes: [200]

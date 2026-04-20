@@ -141,7 +141,7 @@ func joinDiscoveryServer(info ClusterInfo) (deregFn func(), err error) {
 		return nil, fmt.Errorf("marshal cluster info: %w", err)
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/cluster", DiscoveryPort)
+	url := fmt.Sprintf("http://localhost:%d/cluster", DiscoveryPort)
 	client := &http.Client{Timeout: 3 * time.Second}
 
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body)) //nolint:gosec // url is localhost:19100
