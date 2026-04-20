@@ -37,6 +37,8 @@ github.com/james-gibson/isotope v0.2.0 h1:rqBoY/MDZEzlnZuIPfxTm46yiIrGbCCQ6yhYXR
 github.com/james-gibson/isotope v0.2.0/go.mod h1:JHrGluAKZMEWKtG9pBp9CZN1jSHvplS9X80OyaY331g=
 github.com/james-gibson/isotope v0.3.1 h1:X36TLcT4pAxDIFhhXevw9MeKUMAx1IHHIWOVP+a6xx8=
 github.com/james-gibson/isotope v0.3.1/go.mod h1:JHrGluAKZMEWKtG9pBp9CZN1jSHvplS9X80OyaY331g=
+github.com/james-gibson/isotope v0.3.4 h1:hlIqYdBzCThwbfWN07DncCa4AnYNrs5sJu0cRYO5JFY=
+github.com/james-gibson/isotope v0.3.4/go.mod h1:JHrGluAKZMEWKtG9pBp9CZN1jSHvplS9X80OyaY331g=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
