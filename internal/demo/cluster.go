@@ -319,7 +319,7 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	existing, err := fetchAllClusters(ctx, fmt.Sprintf("http://127.0.0.1:%d/cluster", DiscoveryPort))
+	existing, err := fetchAllClusters(ctx, fmt.Sprintf("http://0.0.0.0:%d/cluster", DiscoveryPort))
 	if err != nil {
 		return
 	}
@@ -524,7 +524,7 @@ func Run(ctx context.Context) error {
 	}
 
 	// --- Start adhd headless ------------------------------------------------
-	smokeAlarmURL := fmt.Sprintf("http://127.0.0.1:%d", portA)
+	smokeAlarmURL := fmt.Sprintf("http://0.0.0.0:%d", portA)
 	cmdADHD, err := startProcess("adhd", []string{
 		"--headless",
 		"--config", adhdConfigPath,
@@ -541,7 +541,7 @@ func Run(ctx context.Context) error {
 	// GET /mcp is an SSE endpoint that never closes, so HTTP-based readiness
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
-	if readyErr := waitPortOpen(ctx, fmt.Sprintf("127.0.0.1:%d", adhdPort)); readyErr != nil {
+	if readyErr := waitPortOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort)); readyErr != nil {
 		return fmt.Errorf("adhd MCP readiness: %w", readyErr)
 	}
 
