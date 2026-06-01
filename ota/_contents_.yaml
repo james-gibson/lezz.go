@@ -1,7 +1,7 @@
 
 # Run apt upgrade on a remote device
 artefact:
-  name: aptupgrade
+  name: aptupgrade.tar.zst
   version: 1.0
   device_type: rpi
 
