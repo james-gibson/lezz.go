@@ -6,5 +6,5 @@ artefact:
   device_type: rpi
 
 payloads:
-- name: ota/aptupgradescript
+- name: apt-upgrade.sh
   type: script
