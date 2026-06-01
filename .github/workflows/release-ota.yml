@@ -1,0 +1,216 @@
+# I have everything I need. Here's a complete GitHub Action workflow that builds OTA packages with `otamaker` on tagged releases, publishes the artifacts, prints Pi install instructions, and includes a scaffolded failure webhook.
+
+# ## Workflow File
+
+# Save this as `.github/workflows/release-ota.yml`:
+
+# ```yaml
+name: Build & Publish OTA Release
+
+# Publish release artifacts on tagged refs
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on tags like v1.0.0
+  workflow_dispatch:   # allow manual runs for testing
+
+permissions:
+  contents: write       # required to create releases and upload assets
+
+env:
+  # Path to your otamaker YAML contents file (adjust to your repo layout)
+  OTA_CONTENTS_FILE: ota/_contents_.yaml
+
+jobs:
+  build-ota:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.build.outputs.artifact_name }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # otamaker requires cmake (>=3.10) and python3
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake python3 zstd
+
+      # Clone the raspberrypi/utils repo to obtain otamaker
+      - name: Fetch otamaker
+        run: |
+          git clone --depth 1 https://github.com/raspberrypi/utils.git rpi-utils
+
+      # Build & install otamaker per its README (cmake . && make && sudo make install)
+      - name: Build and install otamaker
+        working-directory: rpi-utils/otamaker
+        run: |
+          cmake .
+          make
+          sudo make install
+
+      - name: Build OTA artifact
+        id: build
+        run: |
+          set -euo pipefail
+
+          # Generate the .tar.zst package and a SHA256 checksum file (-w)
+          otamaker -w "${OTA_CONTENTS_FILE}"
+
+          # Resolve the output filename from the YAML 'name' field
+          ARTIFACT="$(grep -E '^\s*name:' "${OTA_CONTENTS_FILE}" \
+                      | head -n1 | sed -E 's/^\s*name:\s*//; s/["'"'"']//g' | xargs)"
+
+          if [ ! -f "${ARTIFACT}" ]; then
+            echo "Expected artifact '${ARTIFACT}' not found." >&2
+            ls -l
+            exit 1
+          fi
+
+          SHA="$(cut -d' ' -f1 "${ARTIFACT}.sha256sum")"
+
+          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+          echo "Built artifact: ${ARTIFACT}"
+          echo "SHA256: ${SHA}"
+
+      - name: Upload build artifacts (CI retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-package
+          path: |
+            ${{ steps.build.outputs.artifact_name }}
+            ${{ steps.build.outputs.artifact_name }}.sha256sum
+          if-no-files-found: error
+
+      # Publish the artifacts to a GitHub Release attached to the tag
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.build.outputs.artifact_name }}
+            ${{ steps.build.outputs.artifact_name }}.sha256sum
+          generate_release_notes: true
+          body: |
+            ## OTA Update Package
+
+            **Artifact:** `${{ steps.build.outputs.artifact_name }}`
+            **SHA256:** `${{ steps.build.outputs.sha256 }}`
+
+            ### Install on a Raspberry Pi
+
+            1. **Enable Remote Updates** on the target Pi (one-time setup):
+
+               Standard Raspberry Pi OS:
+               ```bash
+               sudo apt update
+               sudo apt install rpi-connect rpi-connect-ota
+               ```
+               Raspberry Pi OS Lite:
+               ```bash
+               sudo apt update
+               sudo apt install rpi-connect-lite rpi-connect-ota
+               ```
+
+            2. **Turn the service on:**
+               ```bash
+               rpi-connect ota on
+               ```
+
+            3. **Deploy via Raspberry Pi Connect.** Provide the
+               download URL of the asset below and this SHA256 checksum:
+
+               - **URL:** download `${{ steps.build.outputs.artifact_name }}` from this release
+               - **SHA256:** `${{ steps.build.outputs.sha256 }}`
+
+      # Print clear install instructions into the run log/summary
+      - name: Print install instructions
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## How to install this OTA update on a Raspberry Pi
+
+          ### 1. One-time setup on the Pi
+          **Standard Raspberry Pi OS:**
+          ```bash
+          sudo apt update
+          sudo apt install rpi-connect rpi-connect-ota
+          ```
+          **Raspberry Pi OS Lite:**
+          ```bash
+          sudo apt update
+          sudo apt install rpi-connect-lite rpi-connect-ota
+          ```
+
+          ### 2. Enable the OTA service
+          ```bash
+          rpi-connect ota on
+          ```
+
+          ### 3. Deploy the update
+          Use Raspberry Pi Connect and supply:
+          EOF
+          {
+            echo "- **Artifact:** \`${{ steps.build.outputs.artifact_name }}\`"
+            echo "- **SHA256:** \`${{ steps.build.outputs.sha256 }}\`"
+            echo "- **Download:** grab the asset from the GitHub Release for this tag."
+            echo ""
+            echo "_Tip: to test locally, host the file with_ \`python3 -m http.server 8000 --directory .\` _and point Connect at that URL._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # FUTURE: Notify an external webhook when the build/publish job fails.
+  # This job is scaffolded and disabled until a webhook endpoint is provisioned.
+  # To activate:
+  #   1. Add a repository secret named FAILURE_WEBHOOK_URL.
+  #   2. Change the `if:` below to: failure() && needs.build-ota.result == 'failure'
+  # ---------------------------------------------------------------------------
+  notify-on-failure:
+    needs: build-ota
+    runs-on: ubuntu-latest
+    # Currently disabled — flip to `failure()` once the webhook exists.
+    if: false
+    steps:
+      - name: Send failure webhook (placeholder)
+        env:
+          WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
+        run: |
+          if [ -z "${WEBHOOK_URL:-}" ]; then
+            echo "FAILURE_WEBHOOK_URL not set; skipping notification."
+            exit 0
+          fi
+          curl -fsS -X POST "${WEBHOOK_URL}" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "event": "ota_build_failed",
+            "repository": "${{ github.repository }}",
+            "ref": "${{ github.ref }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+# ```
+
+# ## How the workflow maps to your requirements
+
+# | Requirement | Implementation |
+# |---|---|
+# | Publish release artifacts on tagged refs | Triggered by `push` on tags matching `v*`; `softprops/action-gh-release` attaches assets to the tag's Release [^1] |
+# | otamaker requirements | Installs `cmake`/`python3`, runs `cmake . && make && sudo make install`, then builds with `otamaker -w` producing a `.tar.zst` and `.sha256sum` [^1] |
+# | Print Pi install instructions | Written to the release body and `$GITHUB_STEP_SUMMARY` with the `rpi-connect`/`rpi-connect-ota` setup and `rpi-connect ota on` steps [^1] |
+# | Future failure webhook | Scaffolded `notify-on-failure` job, disabled via `if: false`, ready to enable with a `FAILURE_WEBHOOK_URL` secret |
+
+# ## Notes from the otamaker docs you should verify against your repo
+
+# - **Contents file:** otamaker takes a YAML contents file as input; the first archive element must be `_contents_.yaml` describing the payloads (e.g. `image-sparse`, `script`, `tmpfile`) [^1]. Adjust the `OTA_CONTENTS_FILE` env var to your actual path.
+# - **Output naming:** the artifact defaults to the `name` specified in the YAML, which is why the workflow parses that field to locate the file [^1].
+# - **Checksum:** the `-w`/`--writesum` flag emits `<outfile>.sha256sum`, which is uploaded alongside the package [^1].
+# - **Script payload return codes** (if your update runs a script): `0` = success, `1` = failure, `2` = success + request reboot; scripts run as `root` in a temp dir [^1].
+# - otamaker can also be **run directly as a Python3 script** without building, if you'd prefer to skip the `cmake`/`make` steps [^1].
+
+# To activate the failure webhook later: add a `FAILURE_WEBHOOK_URL` repository secret and change the `notify-on-failure` job's `if: false` to `if: failure() && needs.build-ota.result == 'failure'`.
+
+# [^1]: [raw.githubusercontent.com](https://raw.githubusercontent.com/raspberrypi/utils/refs/heads/master/otamaker/README.md) (100%)
