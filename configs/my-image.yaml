@@ -9,7 +9,7 @@
 # X-Env-Var-BIN_PATH: /usr/local/bin/lezz
 # X-Env-Var-BIN_PATH-Desc: Install path of the Go binary
 # METAEND
-
+---
 mmdebstrap:
   customize-hooks:
   - |
