@@ -59,8 +59,8 @@ jobs:
           GOARCH: arm64
         run: |
           mkdir -p layer/files
-          go build -trimpath -ldflags="-s -w" -o layer/files/myapp ./cmd/myapp
-          file layer/files/myapp || true
+          go build -trimpath -ldflags="-s -w" -o layer/files/lezz ./cmd/lezz
+          file layer/files/lezz || true
 
       # ---------------------------------------------------------------
       # 2. Build the Pi image with rpi-image-gen (embeds binary + env)
