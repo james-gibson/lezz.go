@@ -1,4 +1,3 @@
-
 # METABEGIN
 # X-Env-Layer-Name: lezz
 # X-Env-Layer-Desc: Embed the Go app and label the deployment environment
@@ -14,5 +13,5 @@
 mmdebstrap:
   customize-hooks:
     - |
-      install -m 0755 "${DIRECTORY}/files/lezz" "$1${IGconf_myapp_BIN_PATH}"
-      echo "APP_ENV=${IGconf_myapp_ENV}" >> "$1/etc/environment"
+      install -m 0755 "${DIRECTORY}/files/lezz" "${1}${IGconf_myapp_BIN_PATH}"
+      echo "APP_ENV=${IGconf_myapp_ENV}" >> "${1}/etc/environment"
