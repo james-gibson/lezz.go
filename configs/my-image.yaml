@@ -13,5 +13,5 @@
 mmdebstrap:
   customize-hooks:
   - |
-    install -m 0755 \"${DIRECTORY}/files/lezz\" \"${1}${IGconf_lezz_BIN_PATH}\"
-    echo '\"APP_ENV=${IGconf_lezz_ENV}\" >> \"${1}/etc/environment\"'
+    install -m 0755 ${DIRECTORY}/files/lezz ${1}${IGconf_lezz_BIN_PATH}
+    echo 'APP_ENV=${IGconf_lezz_ENV}' >> ${1}/etc/environment
