@@ -5,193 +5,176 @@
 # Save this as `.github/workflows/release-ota.yml`:
 
 # ```yaml
-name: Build & Publish OTA Release
+name: Build, Image & Publish OTA Release
 
 # Publish release artifacts on tagged refs
 on:
   push:
     tags:
-      - 'v*'          # triggers on tags like v1.0.0
-  workflow_dispatch:   # allow manual runs for testing
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment label'
+        default: 'production'
 
 permissions:
-  contents: write       # required to create releases and upload assets
+  contents: write
 
 env:
-  # Path to your otamaker YAML contents file (adjust to your repo layout)
+  # --- rpi-image-gen ---
+  IMAGE_CONFIG: configs/my-image.yaml
+  # --- otamaker ---
   OTA_CONTENTS_FILE: ota/_contents_.yaml
+  # Environment label embedded into the image (tag name, manual input, or default)
+  APP_ENV: ${{ github.event.inputs.environment || github.ref_name }}
 
 jobs:
-  build-ota:
-    runs-on: ubuntu-latest
+  build:
+    # rpi-image-gen needs an ARM64 Debian/Raspberry Pi OS-like host.
+    # Use a self-hosted ARM64 runner if you have one; otherwise the GitHub
+    # ARM64 hosted runner label below works for public repos.
+    runs-on: ubuntu-24.04-arm
     outputs:
-      artifact_name: ${{ steps.build.outputs.artifact_name }}
-      sha256: ${{ steps.build.outputs.sha256 }}
+      ota_artifact: ${{ steps.ota.outputs.artifact_name }}
+      ota_sha256:   ${{ steps.ota.outputs.sha256 }}
+      image_name:   ${{ steps.image.outputs.image_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # otamaker requires cmake (>=3.10) and python3
-      - name: Install build prerequisites
+      # ---------------------------------------------------------------
+      # 1. Build the Go application (static ARM64 binary)
+      # ---------------------------------------------------------------
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build Go app (static, ARM64)
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          mkdir -p layer/files
+          go build -trimpath -ldflags="-s -w" -o layer/files/myapp ./cmd/myapp
+          file layer/files/myapp || true
+
+      # ---------------------------------------------------------------
+      # 2. Build the Pi image with rpi-image-gen (embeds binary + env)
+      # ---------------------------------------------------------------
+      - name: Install rpi-image-gen prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake python3 zstd
+          sudo apt-get install -y git
 
-      # Clone the raspberrypi/utils repo to obtain otamaker
-      - name: Fetch otamaker
+      - name: Fetch rpi-image-gen
+        run: |
+          git clone --depth 1 https://github.com/raspberrypi/rpi-image-gen.git
+          # install its dependencies (provided by the repo's helper)
+          cd rpi-image-gen
+          sudo ./install_deps.sh || true
+
+      - name: Build image
+        id: image
+        working-directory: rpi-image-gen
+        env:
+          # Drive the embedded env label from the pipeline
+          IGconf_myapp_ENV: ${{ env.APP_ENV }}
+        run: |
+          set -euo pipefail
+          ./rpi-image-gen build -c "../${IMAGE_CONFIG}"
+
+          # Locate the produced image (.img / .img.xz). Adjust glob if needed.
+          IMG="$(find . -maxdepth 4 -type f \( -name '*.img' -o -name '*.img.xz' \) \
+                 | head -n1)"
+          if [ -z "${IMG}" ]; then
+            echo "No image artifact produced by rpi-image-gen" >&2
+            find . -maxdepth 4 -type f -name '*.img*' || true
+            exit 1
+          fi
+          cp "${IMG}" "../$(basename "${IMG}")"
+          echo "image_name=$(basename "${IMG}")" >> "$GITHUB_OUTPUT"
+          echo "Built image: $(basename "${IMG}")"
+
+      # ---------------------------------------------------------------
+      # 3. Package the image as an OTA artifact with otamaker
+      # ---------------------------------------------------------------
+      - name: Install otamaker prerequisites
+        run: sudo apt-get install -y cmake python3 zstd
+
+      - name: Build and install otamaker
         run: |
           git clone --depth 1 https://github.com/raspberrypi/utils.git rpi-utils
-
-      # Build & install otamaker per its README (cmake . && make && sudo make install)
-      - name: Build and install otamaker
-        working-directory: rpi-utils/otamaker
-        run: |
+          cd rpi-utils/otamaker
           cmake .
           make
           sudo make install
 
       - name: Build OTA artifact
-        id: build
+        id: ota
         run: |
           set -euo pipefail
 
-          # Generate the .tar.zst package and a SHA256 checksum file (-w)
+          # Ensure the contents file points at the freshly built image.
+          # (Your _contents_.yaml should reference the image via an
+          #  image-sparse payload; adjust path if the build placed it elsewhere.)
           otamaker -w "${OTA_CONTENTS_FILE}"
 
-          # Resolve the output filename from the YAML 'name' field
           ARTIFACT="$(grep -E '^\s*name:' "${OTA_CONTENTS_FILE}" \
                       | head -n1 | sed -E 's/^\s*name:\s*//; s/["'"'"']//g' | xargs)"
 
           if [ ! -f "${ARTIFACT}" ]; then
-            echo "Expected artifact '${ARTIFACT}' not found." >&2
+            echo "Expected OTA artifact '${ARTIFACT}' not found." >&2
             ls -l
             exit 1
           fi
 
           SHA="$(cut -d' ' -f1 "${ARTIFACT}.sha256sum")"
-
           echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
-          echo "Built artifact: ${ARTIFACT}"
-          echo "SHA256: ${SHA}"
-
+      # ---------------------------------------------------------------
+      # 4. Upload + publish
+      # ---------------------------------------------------------------
       - name: Upload build artifacts (CI retention)
         uses: actions/upload-artifact@v4
         with:
-          name: ota-package
+          name: release-artifacts
           path: |
-            ${{ steps.build.outputs.artifact_name }}
-            ${{ steps.build.outputs.artifact_name }}.sha256sum
+            ${{ steps.ota.outputs.artifact_name }}
+            ${{ steps.ota.outputs.artifact_name }}.sha256sum
+            ${{ steps.image.outputs.image_name }}
           if-no-files-found: error
 
-      # Publish the artifacts to a GitHub Release attached to the tag
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ steps.build.outputs.artifact_name }}
-            ${{ steps.build.outputs.artifact_name }}.sha256sum
+            ${{ steps.ota.outputs.artifact_name }}
+            ${{ steps.ota.outputs.artifact_name }}.sha256sum
+            ${{ steps.image.outputs.image_name }}
           generate_release_notes: true
           body: |
             ## OTA Update Package
 
-            **Artifact:** `${{ steps.build.outputs.artifact_name }}`
-            **SHA256:** `${{ steps.build.outputs.sha256 }}`
+            **Environment:** `${{ env.APP_ENV }}`
+            **OTA artifact:** `${{ steps.ota.outputs.artifact_name }}`
+            **SHA256:** `${{ steps.ota.outputs.sha256 }}`
+            **Image:** `${{ steps.image.outputs.image_name }}`
 
             ### Install on a Raspberry Pi
 
-            1. **Enable Remote Updates** on the target Pi (one-time setup):
-
-               Standard Raspberry Pi OS:
+            1. One-time setup on the target Pi:
                ```bash
+               # Standard Raspberry Pi OS
                sudo apt update
                sudo apt install rpi-connect rpi-connect-ota
-               ```
-               Raspberry Pi OS Lite:
-               ```bash
-               sudo apt update
+               # Raspberry Pi OS Lite
                sudo apt install rpi-connect-lite rpi-connect-ota
-               ```
 
-            2. **Turn the service on:**
-               ```bash
-               rpi-connect ota on
-               ```
-
-            3. **Deploy via Raspberry Pi Connect.** Provide the
-               download URL of the asset below and this SHA256 checksum:
-
-               - **URL:** download `${{ steps.build.outputs.artifact_name }}` from this release
-               - **SHA256:** `${{ steps.build.outputs.sha256 }}`
-
-      # Print clear install instructions into the run log/summary
-      - name: Print install instructions
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## How to install this OTA update on a Raspberry Pi
-
-          ### 1. One-time setup on the Pi
-          **Standard Raspberry Pi OS:**
-          ```bash
-          sudo apt update
-          sudo apt install rpi-connect rpi-connect-ota
-          ```
-          **Raspberry Pi OS Lite:**
-          ```bash
-          sudo apt update
-          sudo apt install rpi-connect-lite rpi-connect-ota
-          ```
-
-          ### 2. Enable the OTA service
-          ```bash
-          rpi-connect ota on
-          ```
-
-          ### 3. Deploy the update
-          Use Raspberry Pi Connect and supply:
-          EOF
-          {
-            echo "- **Artifact:** \`${{ steps.build.outputs.artifact_name }}\`"
-            echo "- **SHA256:** \`${{ steps.build.outputs.sha256 }}\`"
-            echo "- **Download:** grab the asset from the GitHub Release for this tag."
-            echo ""
-            echo "_Tip: to test locally, host the file with_ \`python3 -m http.server 8000 --directory .\` _and point Connect at that URL._"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ---------------------------------------------------------------------------
-  # FUTURE: Notify an external webhook when the build/publish job fails.
-  # This job is scaffolded and disabled until a webhook endpoint is provisioned.
-  # To activate:
-  #   1. Add a repository secret named FAILURE_WEBHOOK_URL.
-  #   2. Change the `if:` below to: failure() && needs.build-ota.result == 'failure'
-  # ---------------------------------------------------------------------------
-  notify-on-failure:
-    needs: build-ota
-    runs-on: ubuntu-latest
-    # Currently disabled — flip to `failure()` once the webhook exists.
-    if: false
-    steps:
-      - name: Send failure webhook (placeholder)
-        env:
-          WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
-        run: |
-          if [ -z "${WEBHOOK_URL:-}" ]; then
-            echo "FAILURE_WEBHOOK_URL not set; skipping notification."
-            exit 0
-          fi
-          curl -fsS -X POST "${WEBHOOK_URL}" \
-            -H "Content-Type: application/json" \
-            -d @- <<EOF
-          {
-            "event": "ota_build_failed",
-            "repository": "${{ github.repository }}",
-            "ref": "${{ github.ref }}",
-            "run_id": "${{ github.run_id }}",
-            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          EOF
 # ```
 
 # ## How the workflow maps to your requirements
