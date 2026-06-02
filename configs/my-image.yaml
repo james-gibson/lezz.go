@@ -1,42 +1,9 @@
-# METABEGIN
-# X-Env-Layer-Name: example-sdk-setup
-# X-Env-Layer-Category: example
-# X-Env-Layer-Desc: Example layer with dependencies, variables and
-#  demonstrating usage of the uchroot helper to install assets for the local
-#  user.
-# X-Env-Layer-Version: 1.0.0
-# X-Env-Layer-Requires: example-essential-base,rpi-user-credentials
-#
-# X-Env-VarPrefix: acme
-#
-# X-Env-VarRequires: IGconf_device_user
-#
-# X-Env-Var-subdomain: development
-# X-Env-Var-subdomain-Desc: Deployment subdomain
-# X-Env-Var-subdomain-Required: false
-# X-Env-Var-subdomain-Valid: development,staging,production
-# X-Env-Var-subdomain-Set: true
-#
-# X-Env-Var-port: 1024
-# X-Env-Var-port-Desc: Deployment subdomain port
-# X-Env-Var-port-Required: false
-# X-Env-Var-port-Valid: int:1024-1034
-# X-Env-Var-port-Set: true
-#
-# METAEND
----
-mmdebstrap:
-  setup-hooks:
-    - echo "hello from example-sdk-setup"
-  customize-hooks:
-  - cat setup-functions | uchroot $1 'umask 077 && cat > ${HOME}/default-setup'
-  - |-
-    uchroot $1 bash -- <<- 'EOCHROOT'
-    source $HOME/default-setup
-    install_secrets $USER ${IGconf_acme_subdomain}.example.com:${IGconf_acme_port} version1
-    touch $HOME/acme.INSTALLED
-    EOCHROOT
-  cleanup-hooks:
-    - shred --verbose -u --zero $1/home/$IGconf_device_user1/default-setup
-  packages:
-    - bash
+
+layer:
+  base: trixie-minbase
+  device: rpi3
+  app: lezz
+
+# variable overrides are fine in the config file:
+lezz:
+  ENV: staging
