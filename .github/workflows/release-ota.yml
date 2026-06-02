@@ -79,7 +79,7 @@ jobs:
           IGconf_lezz_ENV: ${{ env.APP_ENV }}
         run: |
           set -euo pipefail
-          ./rpi-image-gen build -c "../${IMAGE_CONFIG}"
+          ./rpi-image-gen build -c ../${IMAGE_CONFIG}
 
           # Locate the produced image (.img / .img.xz). Adjust glob if needed.
           IMG="$(find . -maxdepth 4 -type f \( -name '*.img' -o -name '*.img.xz' \) \
