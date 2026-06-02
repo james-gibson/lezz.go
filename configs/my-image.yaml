@@ -1,0 +1,18 @@
+
+# METABEGIN
+# X-Env-Layer-Name: lezz
+# X-Env-Layer-Desc: Embed the Go app and label the deployment environment
+# X-Env-VarPrefix: lezz
+#
+# X-Env-Var-ENV: production
+# X-Env-Var-ENV-Desc: Deployment environment label (dev, staging, production)
+#
+# X-Env-Var-BIN_PATH: /usr/local/bin/lezz
+# X-Env-Var-BIN_PATH-Desc: Install path of the Go binary
+# METAEND
+
+mmdebstrap:
+  customize-hooks:
+    - |
+      install -m 0755 "${DIRECTORY}/files/lezz" "$1${IGconf_myapp_BIN_PATH}"
+      echo "APP_ENV=${IGconf_myapp_ENV}" >> "$1/etc/environment"
