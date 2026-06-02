@@ -1,0 +1,18 @@
+# layer/lezz.yaml  (LAYER FILE - mmdebstrap block belongs here)
+# METABEGIN
+# X-Env-Layer-Name: lezz
+# X-Env-Layer-Description: Embed the Go app and label the deployment environment
+# X-Env-Layer-Category: device
+# X-Env-VarPrefix: lezz
+# X-Env-Var-ENV: staging
+# X-Env-Var-ENV-Description: Deployment environment label (dev, staging, production)
+# X-Env-Var-BIN_PATH: /usr/local/bin/lezz
+# X-Env-Var-BIN_PATH-Description: Install path of the Go binary
+# METAEND
+---
+
+mmdebstrap:
+  customize-hooks:
+    - |
+      install -m 0755 "${DIRECTORY}/files/lezz" "${1}${IGconf_lezz_BIN_PATH}"
+      echo "APP_ENV=${IGconf_lezz_ENV}" >> "${1}/etc/environment"
