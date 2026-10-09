@@ -163,7 +163,7 @@ targets:
     enabled: true
     protocol: "http"
     name: "{{.PeerName}}"
-    endpoint: "http://localhost:{{.PeerPort}}"
+    endpoint: "http://localhost:{{.PeerPort}}/status"
     transport: "http"
     expected:
       healthy_status_codes: [200]
