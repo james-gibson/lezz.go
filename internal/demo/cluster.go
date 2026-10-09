@@ -167,6 +167,18 @@ targets:
     transport: "http"
     expected:
       healthy_status_codes: [200]
+
+remote_agent:
+  managed_updates: true
+  update:
+    strategy: "rolling-single"
+    stop_command: "{{.Binary}} ops stop -pid-file {{.StateDir}}/ocd-smoke-alarm.pid"
+    start_command: "nohup {{.Binary}} serve -config {{.ConfigPath}} >> {{.LogPath}} 2>&1 & sleep 1"
+    verify_command: "{{.Binary}} check -config {{.ConfigPath}}"
+    rollback_on_failure: false
+    max_wait_for_healthy: "30s"
+  safety:
+    require_lock: false
 `))
 
 // smokeAlarmConfig holds template data for one smoke-alarm instance.
@@ -176,6 +188,9 @@ type smokeAlarmConfig struct {
 	StateDir   string
 	PeerName   string
 	PeerPort   int
+	Binary     string
+	ConfigPath string
+	LogPath    string
 }
 
 // adhdConfigTmpl is the minimal YAML config for adhd in headless mode.
@@ -453,6 +468,15 @@ func Run(ctx context.Context) error {
 		}
 	}
 
+	alarmALogPath := tmpRoot + "/alarm-a.log"
+	alarmBLogPath := tmpRoot + "/alarm-b.log"
+	adhdLogPath := tmpRoot + "/adhd.log"
+
+	alarmBin, err := tools.Find("ocd-smoke-alarm")
+	if err != nil {
+		return fmt.Errorf("resolve ocd-smoke-alarm: %w", err)
+	}
+
 	// --- Write configs ------------------------------------------------------
 	configA, err := writeTempConfig(tmpRoot, "alarm-a", smokeAlarmConfigTmpl, smokeAlarmConfig{
 		Port:       portA,
@@ -460,6 +484,9 @@ func Run(ctx context.Context) error {
 		StateDir:   stateA,
 		PeerName:   "alarm-b",
 		PeerPort:   portB,
+		Binary:     alarmBin,
+		ConfigPath: tmpRoot + "/alarm-a.yaml",
+		LogPath:    alarmALogPath,
 	})
 	if err != nil {
 		return err
@@ -471,6 +498,9 @@ func Run(ctx context.Context) error {
 		StateDir:   stateB,
 		PeerName:   "alarm-a",
 		PeerPort:   portA,
+		Binary:     alarmBin,
+		ConfigPath: tmpRoot + "/alarm-b.yaml",
+		LogPath:    alarmBLogPath,
 	})
 	if err != nil {
 		return err
@@ -495,10 +525,6 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("write stable adhd config: %w", copyErr)
 	}
 	defer func() { _ = os.Remove(stableConfigPath) }()
-
-	alarmALogPath := tmpRoot + "/alarm-a.log"
-	alarmBLogPath := tmpRoot + "/alarm-b.log"
-	adhdLogPath := tmpRoot + "/adhd.log"
 
 	// --- Start ocd-smoke-alarm instances ------------------------------------
 	cmdA, err := startProcess("ocd-smoke-alarm", []string{"serve", "-config", configA}, alarmALogPath)
