@@ -327,9 +327,98 @@ func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
 	}
 }
 
+// clusterJoinParams renders the adhd.cluster.join JSON-RPC payload for a
+// cluster. This is the single source of truth for the join wire contract
+// shared with ADHD, so the underscore keys (alarm_a, adhd_mcp, github_repos)
+// cannot drift from what ADHD's adhd.cluster.join handler expects.
+func clusterJoinParams(info ClusterInfo) []byte {
+	params := map[string]interface{}{
+		"name":     info.Name,
+		"alarm_a":  info.AlarmA,
+		"alarm_b":  info.AlarmB,
+		"adhd_mcp": info.AdhdMCP,
+	}
+	if len(info.GithubRepos) > 0 {
+		params["github_repos"] = info.GithubRepos
+	}
+	if len(info.Projects) > 0 {
+		projs := make([]map[string]interface{}, 0, len(info.Projects))
+		for _, p := range info.Projects {
+			projs = append(projs, map[string]interface{}{
+				"name":    p.Name,
+				"repo":    p.Repo,
+				"mcp_url": p.MCPURL,
+			})
+		}
+		params["projects"] = projs
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "adhd.cluster.join",
+		"params":  params,
+	})
+	if err != nil {
+		return nil
+	}
+	return payload
+}
+
+// sendJoin posts an adhd.cluster.join payload about info to a single ADHD MCP
+// endpoint. Best-effort: failures are logged, never fatal.
+func sendJoin(ctx context.Context, adhdMCP string, info ClusterInfo) {
+	if adhdMCP == "" {
+		return
+	}
+	payload := clusterJoinParams(info)
+	if payload == nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adhdMCP, bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		fmt.Printf("notified ADHD at %s about cluster %s\n", adhdMCP, info.Name)
+	}
+}
+
+// projectSeedsFromEnv parses LEZZ_DEMO_PROJECTS (a JSON array of
+// {name, repo, mcp_url}) into project context entries for the cluster. Entries
+// missing name or mcp_url are dropped. The registry and adhd.cluster.join
+// advertise them, letting ADHD register an adhd.project.<name>.call proxy tool
+// for each without manual configuration.
+//
+// Example:
+//
+//	LEZZ_DEMO_PROJECTS='[{"name":"machinewitness","repo":"martinschenk/machinewitness-mcp","mcp_url":"https://machinewitness.eu/mcp"}]'
+func projectSeedsFromEnv() []ProjectEntry {
+	raw := os.Getenv("LEZZ_DEMO_PROJECTS")
+	if raw == "" {
+		return nil
+	}
+	var entries []ProjectEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: LEZZ_DEMO_PROJECTS is not valid JSON, ignoring: %v\n", err)
+		return nil
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.Name != "" && e.MCPURL != "" {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
 // notifyExistingADHD sends an adhd.cluster.join MCP call to all ADHD instances
 // listed in the local discovery registry, informing them about this newly-joined
-// cluster. Best-effort: individual failures are silently ignored.
+// cluster so their dashboards update without waiting for the next poll cycle.
+// Best-effort: individual failures are silently ignored.
 func notifyExistingADHD(newCluster ClusterInfo) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -339,96 +428,14 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 		return
 	}
 
-	joinParams := map[string]interface{}{
-		"name":     newCluster.Name,
-		"alarm_a":  newCluster.AlarmA,
-		"alarm_b":  newCluster.AlarmB,
-		"adhd_mcp": newCluster.AdhdMCP,
-	}
-	if len(newCluster.GithubRepos) > 0 {
-		joinParams["github_repos"] = newCluster.GithubRepos
-	}
-	if len(newCluster.Projects) > 0 {
-		projs := make([]map[string]interface{}, 0, len(newCluster.Projects))
-		for _, p := range newCluster.Projects {
-			projs = append(projs, map[string]interface{}{
-				"name":    p.Name,
-				"repo":    p.Repo,
-				"mcp_url": p.MCPURL,
-			})
-		}
-		joinParams["projects"] = projs
-	}
-	payload, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "adhd.cluster.join",
-		"params":  joinParams,
-	})
-	if err != nil {
-		return
-	}
-
-	client := &http.Client{Timeout: 3 * time.Second}
 	for _, c := range existing {
-		if c.Name == newCluster.Name || c.AdhdMCP == "" {
+		if c.Name == newCluster.Name {
 			continue
 		}
-		// Push new cluster → existing ADHD.
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AdhdMCP, bytes.NewReader(payload))
-		if err != nil {
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			fmt.Printf("notified ADHD at %s about cluster %s\n", c.AdhdMCP, newCluster.Name)
-		}
-
-		// Push existing cluster → new ADHD so both see each other.
-		if newCluster.AdhdMCP == "" {
-			continue
-		}
-		reverseParams := map[string]interface{}{
-			"name":     c.Name,
-			"alarm_a":  c.AlarmA,
-			"alarm_b":  c.AlarmB,
-			"adhd_mcp": c.AdhdMCP,
-		}
-		if len(c.GithubRepos) > 0 {
-			reverseParams["github_repos"] = c.GithubRepos
-		}
-		if len(c.Projects) > 0 {
-			projs := make([]map[string]interface{}, 0, len(c.Projects))
-			for _, p := range c.Projects {
-				projs = append(projs, map[string]interface{}{
-					"name":    p.Name,
-					"repo":    p.Repo,
-					"mcp_url": p.MCPURL,
-				})
-			}
-			reverseParams["projects"] = projs
-		}
-		reversePayload, err := json.Marshal(map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  "adhd.cluster.join",
-			"params":  reverseParams,
-		})
-		if err != nil {
-			continue
-		}
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, newCluster.AdhdMCP, bytes.NewReader(reversePayload))
-		if err != nil {
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err = client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			fmt.Printf("notified ADHD at %s about existing cluster %s\n", newCluster.AdhdMCP, c.Name)
-		}
+		// Push new cluster → existing ADHD, and existing cluster → new ADHD,
+		// so both sides see each other immediately.
+		sendJoin(ctx, c.AdhdMCP, newCluster)
+		sendJoin(ctx, newCluster.AdhdMCP, c)
 	}
 }
 
@@ -574,11 +581,17 @@ func Run(ctx context.Context) error {
 	// --- Start discovery (fixed port + mDNS) --------------------------------
 	host := outboundIP()
 	clusterInfo := ClusterInfo{
-		Name:    clusterName(),
-		AlarmA:  fmt.Sprintf("http://%s:%d", host, portA),
-		AlarmB:  fmt.Sprintf("http://%s:%d", host, portB),
-		AdhdMCP: fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
+		Name:     clusterName(),
+		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
+		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
+		AdhdMCP:  fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
+		Projects: projectSeedsFromEnv(),
 	}
+
+	// Tell our own ADHD about this cluster right away so it registers the
+	// cluster peer and its project proxy tools (adhd.project.<name>.call)
+	// without waiting for another cluster to join.
+	sendJoin(context.Background(), clusterInfo.AdhdMCP, clusterInfo)
 
 	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
 	switch discoveryErr {
