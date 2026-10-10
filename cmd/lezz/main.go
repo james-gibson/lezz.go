@@ -54,6 +54,10 @@ func main() {
 		cmdDemo(ctx)
 		cancel()
 
+	case "auto":
+		cmdAuto(ctx)
+		cancel()
+
 	case "run":
 		cancel()
 		cmdRun()
@@ -91,6 +95,18 @@ func main() {
 func cmdDemo(ctx context.Context) {
 	if err := demo.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)
+		os.Exit(1)
+	}
+}
+
+// lezz auto
+// Launches a base cluster in auto mode: installs any missing managed tools,
+// reuses an existing discovery registry, and starts the cluster empty and
+// awaiting — targets/config arrive via the server's auto-refresh and remote
+// update paths instead of a hardcoded config.
+func cmdAuto(ctx context.Context) {
+	if err := demo.RunAuto(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "auto:", err)
 		os.Exit(1)
 	}
 }
@@ -458,6 +474,7 @@ func usage() {
 
 Usage:
   lezz demo                          Launch a self-contained demo cluster
+  lezz auto                          Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
   lezz run <tool> [args...]          Replace lezz with the tool (exec)
   lezz start <tool> [args...]        Spawn the tool as a child process (wait)
   lezz install <tool>                Download and install a managed tool
