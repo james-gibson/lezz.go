@@ -15,6 +15,7 @@ func TestRenderBaseSmokeAlarmConfig(t *testing.T) {
 		Binary:             "/tmp/ocd-smoke-alarm",
 		ConfigPath:         "/tmp/lezz-base/alarm-a.yaml",
 		LogPath:            "/tmp/lezz-base/alarm-a.log",
+		ClusterID:          baseClusterID(),
 		FederationBasePort: 5100,
 		FederationMaxPort:  5107,
 	}); err != nil {
@@ -26,6 +27,7 @@ func TestRenderBaseSmokeAlarmConfig(t *testing.T) {
 		"discovery:",
 		"enabled: true",
 		"federation:",
+		"cluster_id: \"lezz-base:5100-5107\"",
 		"base_port: 5100",
 		"max_port: 5107",
 		"dynamic_config:",

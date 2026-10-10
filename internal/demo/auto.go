@@ -78,6 +78,7 @@ targets: []
 # instances by hand.
 federation:
   enabled: true
+  cluster_id: "{{.ClusterID}}"
   base_port: {{.FederationBasePort}}
   max_port: {{.FederationMaxPort}}
   poll_interval: "5s"
@@ -126,6 +127,7 @@ type baseSmokeAlarmConfig struct {
 	Binary             string
 	ConfigPath         string
 	LogPath            string
+	ClusterID          string
 	FederationBasePort int
 	FederationMaxPort  int
 }
@@ -133,6 +135,15 @@ type baseSmokeAlarmConfig struct {
 // baseClusterName identifies a base cluster within the discovery registry.
 func baseClusterName() string {
 	return fmt.Sprintf("base-%d", os.Getpid())
+}
+
+// baseClusterID is the shared federation cluster identity for every base
+// instance. It is scoped to the shared federation port range rather than a
+// single process, so additional `lezz auto` runs joining the same range form
+// one cluster whose links trust themselves by construction (same-cluster peers
+// are mirrored into the alarm's isotope list at the peer-certified rung).
+func baseClusterID() string {
+	return fmt.Sprintf("lezz-base:%d-%d", federationBasePort, federationMaxPort)
 }
 
 // ensureTools installs any of the named managed tools that are missing from
@@ -269,6 +280,7 @@ func RunAuto(ctx context.Context) error {
 		Binary:             alarmBin,
 		ConfigPath:         tmpRoot + "/alarm-a.yaml",
 		LogPath:            alarmALogPath,
+		ClusterID:          baseClusterID(),
 		FederationBasePort: federationBasePort,
 		FederationMaxPort:  federationMaxPort,
 	})
@@ -283,6 +295,7 @@ func RunAuto(ctx context.Context) error {
 		Binary:             alarmBin,
 		ConfigPath:         tmpRoot + "/alarm-b.yaml",
 		LogPath:            alarmBLogPath,
+		ClusterID:          baseClusterID(),
 		FederationBasePort: federationBasePort,
 		FederationMaxPort:  federationMaxPort,
 	})
