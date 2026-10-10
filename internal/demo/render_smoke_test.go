@@ -9,12 +9,14 @@ import (
 func TestRenderBaseSmokeAlarmConfig(t *testing.T) {
 	var buf bytes.Buffer
 	if err := baseSmokeAlarmConfigTmpl.Execute(&buf, baseSmokeAlarmConfig{
-		Port:       19101,
-		ListenAddr: "0.0.0.0",
-		StateDir:   "/tmp/lezz-base/state-a",
-		Binary:     "/tmp/ocd-smoke-alarm",
-		ConfigPath: "/tmp/lezz-base/alarm-a.yaml",
-		LogPath:    "/tmp/lezz-base/alarm-a.log",
+		Port:               19101,
+		ListenAddr:         "0.0.0.0",
+		StateDir:           "/tmp/lezz-base/state-a",
+		Binary:             "/tmp/ocd-smoke-alarm",
+		ConfigPath:         "/tmp/lezz-base/alarm-a.yaml",
+		LogPath:            "/tmp/lezz-base/alarm-a.log",
+		FederationBasePort: 5100,
+		FederationMaxPort:  5107,
 	}); err != nil {
 		t.Fatalf("execute base template: %v", err)
 	}
@@ -23,6 +25,9 @@ func TestRenderBaseSmokeAlarmConfig(t *testing.T) {
 		"targets: []",
 		"discovery:",
 		"enabled: true",
+		"federation:",
+		"base_port: 5100",
+		"max_port: 5107",
 		"dynamic_config:",
 		"remote_agent:",
 		"managed_updates: true",

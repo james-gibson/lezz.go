@@ -71,12 +71,22 @@ alerts:
 # discovery (auto-refresh) or pushed via remote management — never hardcoded.
 targets: []
 
-# NOTE: auto is meant to chain instances link-by-link using smoke-alarm's
-# federation slot election (the first instance to bind base_port becomes the
-# introducer, each later instance claims the next slot). That is intentionally
-# NOT enabled yet: the introducer currently deadlocks on the first introduction
-# (james-gibson/smoke-alarm#10), which would wedge the whole base as soon as a
-# second link joined. Re-add a federation block here once that is fixed.
+# Chain link by link: every base instance shares this federation port range, so
+# they self-elect a mesh with no manual wiring — the first to bind base_port
+# becomes the introducer, and each later instance claims the next free slot and
+# introduces itself. This is what sets auto apart from demo, which peers
+# instances by hand.
+federation:
+  enabled: true
+  base_port: {{.FederationBasePort}}
+  max_port: {{.FederationMaxPort}}
+  poll_interval: "5s"
+  announce_interval: "10s"
+  heartbeat_interval: "15s"
+  heartbeat_timeout: "45s"
+  upstream: ""
+  downstream: []
+  rank: 0
 
 dynamic_config:
   enabled: true
@@ -99,14 +109,25 @@ remote_agent:
     require_lock: false
 `))
 
+// federationBasePort is the first port in the slot-claiming range shared by
+// every base instance (see the federation block in baseSmokeAlarmConfigTmpl).
+// The range deliberately avoids lezz's discovery port (19100), which is also
+// smoke-alarm's federation default.
+const (
+	federationBasePort = 5100
+	federationMaxPort  = 5107
+)
+
 // baseSmokeAlarmConfig holds template data for one base smoke-alarm instance.
 type baseSmokeAlarmConfig struct {
-	Port       int
-	ListenAddr string
-	StateDir   string
-	Binary     string
-	ConfigPath string
-	LogPath    string
+	Port               int
+	ListenAddr         string
+	StateDir           string
+	Binary             string
+	ConfigPath         string
+	LogPath            string
+	FederationBasePort int
+	FederationMaxPort  int
 }
 
 // baseClusterName identifies a base cluster within the discovery registry.
@@ -168,9 +189,11 @@ func printRegistry(clusters []ClusterInfo) {
 //
 // Unlike Run, a base cluster is empty and awaiting: the two ocd-smoke-alarm
 // instances carry no hardcoded targets and are instead populated at runtime by
-// discovery (auto-refresh) and remote management (remote updates). adhd is
-// started with --demo, so it builds its endpoints from the registry rather than
-// a hardcoded config file.
+// discovery (auto-refresh) and remote management (remote updates). They also
+// share a federation port range, so they chain themselves into a mesh (first to
+// bind base_port is the introducer; the rest claim the next free slot) instead
+// of being peered by hand. adhd is started with --demo, so it builds its
+// endpoints from the registry rather than a hardcoded config file.
 //
 // Auto mode also:
 //   - installs any missing managed tools (adhd, ocd-smoke-alarm), and
@@ -236,25 +259,32 @@ func RunAuto(ctx context.Context) error {
 	}
 
 	// --- Write empty, awaiting configs --------------------------------------
+	// Both instances share the same federation port range, so they chain into a
+	// mesh automatically: whichever binds federationBasePort first is the
+	// introducer, the other claims the next slot as a follower.
 	configA, err := writeTempConfig(tmpRoot, "alarm-a", baseSmokeAlarmConfigTmpl, baseSmokeAlarmConfig{
-		Port:       portA,
-		ListenAddr: healthListenAddr,
-		StateDir:   stateA,
-		Binary:     alarmBin,
-		ConfigPath: tmpRoot + "/alarm-a.yaml",
-		LogPath:    alarmALogPath,
+		Port:               portA,
+		ListenAddr:         healthListenAddr,
+		StateDir:           stateA,
+		Binary:             alarmBin,
+		ConfigPath:         tmpRoot + "/alarm-a.yaml",
+		LogPath:            alarmALogPath,
+		FederationBasePort: federationBasePort,
+		FederationMaxPort:  federationMaxPort,
 	})
 	if err != nil {
 		return err
 	}
 
 	configB, err := writeTempConfig(tmpRoot, "alarm-b", baseSmokeAlarmConfigTmpl, baseSmokeAlarmConfig{
-		Port:       portB,
-		ListenAddr: healthListenAddr,
-		StateDir:   stateB,
-		Binary:     alarmBin,
-		ConfigPath: tmpRoot + "/alarm-b.yaml",
-		LogPath:    alarmBLogPath,
+		Port:               portB,
+		ListenAddr:         healthListenAddr,
+		StateDir:           stateB,
+		Binary:             alarmBin,
+		ConfigPath:         tmpRoot + "/alarm-b.yaml",
+		LogPath:            alarmBLogPath,
+		FederationBasePort: federationBasePort,
+		FederationMaxPort:  federationMaxPort,
 	})
 	if err != nil {
 		return err
@@ -364,11 +394,13 @@ alarm-b      %s/status   (no targets — awaiting auto/remote config)
 adhd MCP     %s  (config discovered from the registry)
 isotopes     %s
 registry     http://localhost:%d/cluster
+federation   %d-%d        (instances auto-chain; first to bind %d is introducer)
 
 connect dashboard:  adhd --demo
 
 Targets are picked up automatically as local MCP/ACP configs appear, or pushed
-via remote updates. Logs:
+via remote updates. Additional instances started with the same federation range
+chain on automatically as followers. Logs:
 
   %s
   %s
@@ -376,6 +408,7 @@ via remote updates. Logs:
 
 Ctrl+C to stop
 `, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, DiscoveryPort,
+		federationBasePort, federationMaxPort, federationBasePort,
 		alarmALogPath, alarmBLogPath, adhdLogPath)
 
 	// --- Wait for shutdown signal -------------------------------------------

@@ -117,6 +117,10 @@ to be populated at runtime instead of hardcoding the config at launch:
 - Two `ocd-smoke-alarm` instances with **no hardcoded targets**: they start empty
   and are populated by the server's auto-refresh (discovery) and remote-update
   (`remote_agent`) paths
+- The instances **chain themselves into a federation mesh**: the first to bind
+  `base_port` becomes the introducer and each later instance claims the next
+  free port and introduces itself — no manual peering (this is what sets `auto`
+  apart from `demo`, which wires instances by hand)
 - One `adhd` instance in headless mode started with `--demo`, so it builds its
   `smoke_alarm` endpoints from the discovery registry rather than a config file
 - A fixed-port discovery registry at `:19100/cluster` and mDNS advertisement
@@ -128,12 +132,9 @@ adhd --demo
 ```
 
 Because the base cluster carries no targets until they appear, a second
-`lezz auto` run on the same host simply reuses the running registry.
-
-> Planned: `auto` is intended to chain instances link-by-link via smoke-alarm's
-> federation slot election (the first instance to bind `base_port` becomes the
-> introducer). That is not enabled yet — the introducer currently deadlocks on
-> the first introduction (james-gibson/smoke-alarm#10).
+`lezz auto` run on the same host reuses the running registry, and further
+`ocd-smoke-alarm` instances started with the same federation range chain on as
+followers automatically.
 
 ---
 

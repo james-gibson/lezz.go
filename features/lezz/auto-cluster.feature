@@ -33,6 +33,21 @@ Feature: Auto Base Cluster
     And each instance enables remote_agent for remote updates
     And each instance serves /healthz
 
+  Scenario: base instances chain themselves into a federation mesh
+    Given no lezz discovery registry is running
+    When I run "lezz auto"
+    Then the first smoke-alarm binds federation port 5100 and becomes the introducer
+    And the second smoke-alarm claims the next free port and becomes a follower
+    And no peer target is written to either config
+    And the follower introduces itself to the introducer automatically
+
+  Scenario: additional instances with the same federation range chain on
+    Given a lezz auto base cluster is running with federation ports 5100-5107
+    When a third smoke-alarm starts with the same federation range
+    Then it claims the next free federation port
+    And it introduces itself to the introducer without manual configuration
+    And it appears in the introducer's GET /membership
+
   Scenario: base cluster adhd discovers endpoints from the registry
     Given no lezz discovery registry is running
     When I run "lezz auto"
