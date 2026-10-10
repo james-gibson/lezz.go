@@ -9,6 +9,7 @@ The orchestration layer for the prototype lab. Installs and manages the other la
 ```sh
 # Demo cluster
 lezz demo                              # start a self-contained cluster
+lezz auto                              # start a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
 
 # Tool lifecycle
 lezz install <tool>                    # download and install a managed tool
@@ -103,6 +104,36 @@ curl http://localhost:8088/status | jq .
 curl http://localhost:8088/isotope/list | jq .
 curl http://localhost:19100/cluster | jq .
 ```
+
+---
+
+## lezz auto
+
+`lezz auto` launches a base cluster in auto mode — empty and awaiting, designed
+to be populated at runtime instead of hardcoding the config at launch:
+
+- Installs any missing managed tools (`adhd`, `ocd-smoke-alarm`) on demand
+- Reuses a live discovery registry instead of starting a competing second cluster
+- Two `ocd-smoke-alarm` instances with **no hardcoded targets**: they start empty
+  and are populated by the server's auto-refresh (discovery) and remote-update
+  (`remote_agent`) paths
+- One `adhd` instance in headless mode started with `--demo`, so it builds its
+  `smoke_alarm` endpoints from the discovery registry rather than a config file
+- A fixed-port discovery registry at `:19100/cluster` and mDNS advertisement
+
+```sh
+lezz auto
+# connect a dashboard:
+adhd --demo
+```
+
+Because the base cluster carries no targets until they appear, a second
+`lezz auto` run on the same host simply reuses the running registry.
+
+> Planned: `auto` is intended to chain instances link-by-link via smoke-alarm's
+> federation slot election (the first instance to bind `base_port` becomes the
+> introducer). That is not enabled yet — the introducer currently deadlocks on
+> the first introduction (james-gibson/smoke-alarm#10).
 
 ---
 
