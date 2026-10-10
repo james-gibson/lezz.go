@@ -43,3 +43,26 @@ func TestRenderBaseSmokeAlarmConfig(t *testing.T) {
 		t.Errorf("base config must not hardcode a peer target:\n%s", out)
 	}
 }
+
+func TestRenderBaseSmokeAlarmConfigWithoutClusterID(t *testing.T) {
+	var buf bytes.Buffer
+	if err := baseSmokeAlarmConfigTmpl.Execute(&buf, baseSmokeAlarmConfig{
+		Port:               19102,
+		ListenAddr:         "0.0.0.0",
+		StateDir:           "/tmp/lezz-base/state-b",
+		Binary:             "/tmp/ocd-smoke-alarm",
+		ConfigPath:         "/tmp/lezz-base/alarm-b.yaml",
+		LogPath:            "/tmp/lezz-base/alarm-b.log",
+		FederationBasePort: 5100,
+		FederationMaxPort:  5107,
+	}); err != nil {
+		t.Fatalf("execute base template: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "cluster_id") {
+		t.Errorf("config with no ClusterID must omit cluster_id:\n%s", out)
+	}
+	if !strings.Contains(out, "base_port: 5100") {
+		t.Errorf("federation block must survive without cluster_id:\n%s", out)
+	}
+}

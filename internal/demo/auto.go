@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/template"
 	"time"
@@ -78,8 +80,8 @@ targets: []
 # instances by hand.
 federation:
   enabled: true
-  cluster_id: "{{.ClusterID}}"
-  base_port: {{.FederationBasePort}}
+{{if .ClusterID}}  cluster_id: "{{.ClusterID}}"
+{{end}}  base_port: {{.FederationBasePort}}
   max_port: {{.FederationMaxPort}}
   poll_interval: "5s"
   announce_interval: "10s"
@@ -144,6 +146,68 @@ func baseClusterName() string {
 // are mirrored into the alarm's isotope list at the peer-certified rung).
 func baseClusterID() string {
 	return fmt.Sprintf("lezz-base:%d-%d", federationBasePort, federationMaxPort)
+}
+
+// writeValidatedAlarmConfig renders a base alarm config and checks it against
+// the installed binary before it is used. ocd-smoke-alarm decodes config
+// strictly (unknown keys are errors), so a build that predates a field would
+// refuse to start. When the first render is rejected and an optional cluster
+// identity was supplied, it retries without that field and warns instead of
+// failing the whole cluster.
+func writeValidatedAlarmConfig(ctx context.Context, dir, name, binary string, cfg baseSmokeAlarmConfig) (string, error) {
+	path, err := writeTempConfig(dir, name, baseSmokeAlarmConfigTmpl, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	if validateErr := alarmValidate(ctx, binary, path); validateErr == nil {
+		return path, nil
+	} else if cfg.ClusterID == "" {
+		return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
+	}
+
+	// The installed binary does not know cluster_id; fall back to a config
+	// without it so `lezz auto` still chains, just without self-trust.
+	cfg.ClusterID = ""
+	path, err = writeTempConfig(dir, name, baseSmokeAlarmConfigTmpl, cfg)
+	if err != nil {
+		return "", err
+	}
+	if validateErr := alarmValidate(ctx, binary, path); validateErr != nil {
+		return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
+	}
+	fmt.Fprintf(os.Stderr,
+		"warning: installed ocd-smoke-alarm does not support cluster_id; base cluster links will not self-trust — run: lezz install ocd-smoke-alarm\n")
+	return path, nil
+}
+
+// alarmValidate runs the binary's own config validator and returns the combined
+// output on failure. This is the cheapest reliable capability probe: it uses
+// the exact parser serve will use.
+func alarmValidate(ctx context.Context, binary, configPath string) error {
+	cmd := exec.CommandContext(ctx, binary, "validate", "-config", configPath) //nolint:gosec // binary is resolved via tools.Find()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// tailFile returns the last maxLines lines of path, or "" when it cannot be
+// read. It is used to surface a crashed child's output in the calling error.
+func tailFile(path string, maxLines int) string {
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed from an os.MkdirTemp directory under our control
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ensureTools installs any of the named managed tools that are missing from
@@ -273,7 +337,7 @@ func RunAuto(ctx context.Context) error {
 	// Both instances share the same federation port range, so they chain into a
 	// mesh automatically: whichever binds federationBasePort first is the
 	// introducer, the other claims the next slot as a follower.
-	configA, err := writeTempConfig(tmpRoot, "alarm-a", baseSmokeAlarmConfigTmpl, baseSmokeAlarmConfig{
+	configA, err := writeValidatedAlarmConfig(ctx, tmpRoot, "alarm-a", alarmBin, baseSmokeAlarmConfig{
 		Port:               portA,
 		ListenAddr:         healthListenAddr,
 		StateDir:           stateA,
@@ -288,7 +352,7 @@ func RunAuto(ctx context.Context) error {
 		return err
 	}
 
-	configB, err := writeTempConfig(tmpRoot, "alarm-b", baseSmokeAlarmConfigTmpl, baseSmokeAlarmConfig{
+	configB, err := writeValidatedAlarmConfig(ctx, tmpRoot, "alarm-b", alarmBin, baseSmokeAlarmConfig{
 		Port:               portB,
 		ListenAddr:         healthListenAddr,
 		StateDir:           stateB,
@@ -319,11 +383,11 @@ func RunAuto(ctx context.Context) error {
 	// --- Poll alarm readiness -----------------------------------------------
 	fmt.Println("waiting for alarm-a to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portA)); readyErr != nil {
-		return fmt.Errorf("alarm-a readiness: %w", readyErr)
+		return fmt.Errorf("alarm-a readiness: %w\n--- %s ---\n%s", readyErr, alarmALogPath, tailFile(alarmALogPath, 20))
 	}
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portB)); readyErr != nil {
-		return fmt.Errorf("alarm-b readiness: %w", readyErr)
+		return fmt.Errorf("alarm-b readiness: %w\n--- %s ---\n%s", readyErr, alarmBLogPath, tailFile(alarmBLogPath, 20))
 	}
 
 	host := outboundIP()
