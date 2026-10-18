@@ -435,6 +435,12 @@ func RunAuto(ctx context.Context) error {
 		"--log", adhdLogPath,
 		"--mcp-addr", fmt.Sprintf(":%d", adhdPort),
 		"--smoke-alarm", smokeAlarmURL,
+		// lezz demo binds adhd on all interfaces on purpose so the LAN can
+		// discover the cluster. adhd's advertise guard otherwise refuses to
+		// register/advertise an unguarded endpoint, because that names an
+		// unauthenticated MCP surface to the LAN (see adhd#15). --force is the
+		// operator stating that override out loud for the demo.
+		"--force",
 	}, adhdLogPath)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
