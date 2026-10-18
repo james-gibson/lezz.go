@@ -564,6 +564,10 @@ func Run(ctx context.Context) error {
 		"--log", adhdLogPath,
 		"--mcp-addr", fmt.Sprintf(":%d", adhdPort),
 		"--smoke-alarm", smokeAlarmURL,
+		// Deliberate all-interfaces bind for LAN discovery; adhd's advertise
+		// guard otherwise refuses to register/advertise an unguarded endpoint
+		// (see adhd#15). --force states the override out loud for the demo.
+		"--force",
 	}, adhdLogPath)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
