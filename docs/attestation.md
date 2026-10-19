@@ -505,7 +505,7 @@ BGP:
 | class | signal | restore |
 | --- | --- | --- |
 | **noise** — a flap, a restart, the cat | dampening penalty | returns as the penalty decays; no inspection |
-| **compromise** — the burglar, the fire | evidence, not variance | recertification by a third party; **decay is not recertification** |
+| **compromise** — the burglar, the fire | evidence, not variance | recertification by a third party — a fresh isotope and a quorum (*Recertification is a fresh isotope*); **decay is not recertification** |
 
 BGP lets a dampened route return on time alone. That is right for a flap and wrong for
 a break-in: waiting is not an inspection, and an intruder benefits from a clock.
@@ -525,6 +525,46 @@ Two consequences that tighten earlier sections:
   fast path exists for receipts that were never revoked, not for ones that were; a
   revoked receipt that arrives pre-baked is simply a disconnected meter presented for
   reconnection.
+
+## Recertification is a fresh isotope, not a decayed one
+
+This is what the Gherkin isotopes are for. A revoked participant is re-enabled by
+**proving it will not burn the house down** — declaring the behaviour it promises,
+letting independent verifiers run it, and letting consensus accept the result. The
+electrician's visit is a passing spec, not a waiting period.
+
+The flow, and the reason each part is load-bearing:
+
+| part | says | fails without it |
+| --- | --- | --- |
+| **the isotope** — Gherkin canonicalised and signed | *what* you promise: the feature set and the refusals | a promise nobody can reproduce or compare |
+| **a fresh challenge** bound into the run | *when* you proved it | an old pass re-certifies forever |
+| **independent verifiers + consensus** | *who* accepted it | self-certification |
+
+**Replay is the hazard, and canonicalisation is what creates it.** The isotope's virtue
+is stability — the same spec yields the same token — and that stability is exactly what
+makes an old passing token presentable as a new certificate. So the token alone must
+never re-enable anything: the challenge is bound into the run, and only the *result* of
+that run enters a **new** attestation. A canon token is a claim about behaviour; it is
+not a claim about now.
+
+**The recertificate names the new feature combination**, because isotopes are
+feature-driven (`The fabric`, communities). That is what makes the difference legible:
+if the fix changed what the node does, the spec — and therefore the token — differs, and
+the record shows *what changed since the fire* rather than only that something did.
+And because the isotope is canonicalised and re-derived rather than trusted, a
+recertification cannot be forged any more than an advertisement can.
+
+**Consensus sets the price, and three nodes is not a quorum.** `N ≥ 3F + 1` gives
+`F = 0` at `N = 3` (`MATH.md`), so the verification triad can certify only under an
+honest-majority assumption. If re-approval is meant to survive a dishonest certifier,
+the certifying set has to be larger than the triad — the quorum is a *plural*
+electrician, and a single inspection is exactly what the analogy does not permit.
+
+**And "aging back in" is the right instinct with one correction:** it does not age, it
+*argues*. Time is still not an inspection; the isotope replaces the clock with evidence.
+So the old receipt stays revoked, and the restored session carries a new attestation
+citing the isotope and the challenge that produced it.
 
 ## The two logs
 
@@ -609,6 +649,9 @@ the head only.
 - **A revoked receipt never ages back into validity.** Decay restores a dampened route;
   it does not restore a disconnection. Restoring requires a new attestation from a
   certifier, because time is not an inspection.
+- **A passing spec is not a passing run.** A canonical isotope is stable by design, so
+  the token proves the promise and not the moment; without a fresh challenge bound into
+  the run, an old pass re-certifies forever.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
