@@ -91,6 +91,37 @@ intervals are the internal variant (`PLANE.md`, §*Axes*). A plane on a private 
 comparable only to itself: that is the partition case, and it remains accurate while
 partitioned.
 
+## Negotiation is a handshake in three ticks
+
+Three ingredients: the tick wheel (a shared phase), the 42i position (the measure),
+and three tick cycles (the flights).
+
+| flight | slot | carries | TLS analogue |
+| --- | --- | --- | --- |
+| 1 | *k* | `42 + 0i`, the surface requested, the project key | ClientHello / ServerHello — public parameters, no secret |
+| 2 | *k+1* | the cluster's attestation: `(key, cluster, surface, anchor)` | Certificate — binds a key to a domain, and names the domain reached |
+| 3 | *k+2* | proof of possession of the project key | CertificateVerify / Finished |
+
+**Why three slots, rather than as fast as possible.** The wheel gives alignment but no
+order inside a slot (*The tick*), so one flight per slot is what makes the sequence
+ordered at all: three flights, three distinguishable slots, no timestamp needed to
+order them. The cost is structural — a handshake takes at least three slots, fifteen
+seconds at the default — and a peer cannot distinguish "slow" from "absent" until its
+slot passes. A retry after a partition therefore costs slots, not milliseconds.
+
+**What the attestation does in that shape: it orients the domain.** Before anything
+dependent on placement is sent, the peer learns which cluster and which surface it is
+actually talking to. That is the certificate-name check — not the session key. The
+attestation is public, it authorises nothing, and it does not move when the session's
+trust does.
+
+**The asymmetry with TLS, stated so it is not over-read.** `42 + 0i` is a coordinate
+origin, not a trust anchor: anyone can compute it, which is why the existing docs call
+the 42 handshake a position check rather than authentication. TLS terminates trust in a
+CA; here it terminates in the cluster's verification — registry, mDNS, rung. **The
+handshake orients; it does not admit.** Admission is a separate step, and it is the one
+that assigns capability.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -148,6 +179,10 @@ the head only.
 - **A slot is not a timestamp.** `mod(UTC, 5s)` recurs, so anything stamped with the
   slot alone can be presented as current. Order on the absolute time, compare on the
   slot, and never let a slot decide freshness.
+- **A whole handshake can be replayed, not just a flight.** Three flights in three
+  slots are still three recorded messages; without a per-handshake nonce in flight 1
+  and an absolute `joined_at` to check, a recorded exchange can be presented verbatim
+  later. The same records that make the handshake ordered make it replayable.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
