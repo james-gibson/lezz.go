@@ -270,13 +270,17 @@ func (b *Bridge) Close() error {
 		}
 		b.killGroup()
 		select {
-		case <-b.waitCh:
+		case waitErr := <-b.waitCh:
+			// The child was killed deliberately, so a non-nil exit status is expected.
+			_ = waitErr
 		case <-time.After(5 * time.Second):
 			if b.cmd.Process != nil {
 				_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGKILL)
 			}
 			select {
-			case <-b.waitCh:
+			case waitErr := <-b.waitCh:
+				// Same: SIGKILL exit status carries no information here.
+				_ = waitErr
 			case <-time.After(2 * time.Second):
 			}
 		}
