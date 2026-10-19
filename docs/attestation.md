@@ -264,6 +264,87 @@ different property, and a fault falls to a neighbour — not a consensus set. Cl
 fault tolerance for the golden triangle would be claiming a figure the arithmetic does
 not support; Byzantine tolerance starts at four nodes.
 
+## The fabric: three processes, stacked, feature-driven
+
+A, B, C are not abstractions — they are **process separate**, and that separation is
+what the three slots cost:
+
+| node | process | why that one |
+| --- | --- | --- |
+| **A** | `lezz.go` | hosts and manages the session: presence |
+| **B** | `adhd` | mints the dynamic tool array (`adhd.project.<id>.call`): surface |
+| **C** | `ocd-smoke-alarm` | monitors and holds the isotope records: authority |
+
+**Any of them can be stacked into another.** Stacking is `SLA.md` §12's route
+reflection: *a sub-cluster is a node to its parent and a cluster to its members.* One
+process then carries more than one role, which is legitimate — and it is not free:
+
+- **Stacking buys latency and spends isolation.** Flights that cross a process
+  boundary cost a slot; flights inside one process need not. A stacked instance can
+  answer in one slot instead of three.
+- **It also spends the property the triad exists for.** *No node reports on itself*
+  (`RECONCILE.md`) holds only while the roles are in different processes. A stacked
+  node verifying its own ingress is a self-report, whatever the diagram says.
+- So stacking is a **declared** arrangement: a demo, a dev cluster, a single-host
+  install. It must not be silent, because the latency and the guarantee move together.
+
+### A golden cluster is a single node to its neighbours
+
+A reference ("golden") public cluster presents **one endpoint** to other clusters, and
+the triad hides behind it. That is route reflection again, one level up: the cluster is
+a peer to its neighbours and a cluster to its members, so a neighbour speaks to an
+address rather than to three roles.
+
+This is why **addresses persist**. The endpoint is a rendezvous, not a process: roles
+swap underneath it and the address stays, and `SLA.md` §12's *graceful restart* is what
+makes that honest — the peer already holds the mirrored traffic, so a restart is a role
+swap rather than a cold start. The persistence is also why `ADDRESSING.md`'s rule
+matters: *an address is a claim.* An address that outlives its process is exactly the
+case where the claim can be stale, so it is re-verified, never inherited.
+
+### Isotopes are feature-driven
+
+Routing is by **feature, not by identity**. `SLA.md` §12 names the mechanism: BGP
+**communities** (RFC 1997) — a tag a peer acts on by policy without knowing the
+advertiser. The isotope is derived from the *declared feature combination*, which is
+what makes a route meaningful to a stranger: the caller asks for a feature, not for a
+node.
+
+Two consequences follow, and both are already stated in the source:
+
+- **An advertisement is reachability, not authority.** Presence (mDNS: *I am here*) and
+  authority (isotope records: *I am authorized to this degree*) are announced
+  separately — holding an isotope is not reachability.
+- **A hijacked announcement is detectable**, because the isotope is canonicalised and
+  re-derived rather than trusted. That is the signature BGP never had.
+
+### The table is learned, and dampening is the measure
+
+The routing table is populated by announcements, not configuration. Selection is
+**local policy**, not shortest path; withdrawal is **self-demotion**; and a flapping
+route is **suppressed, not banned** — `RFC 2439` dampening, a decaying penalty.
+
+That is the 42i measure doing routing work: *a caller that keeps departing is removed
+from the routeable set* (`kb/scripts/lab/README.md`), and it returns as the penalty
+decays. Nothing is banned; the record over time does the work.
+
+**Speed is a capacity question, not an admission shortcut.** `SLA.md` §12: *the answer
+to more traffic is another door — and a peer is another door, reached by an
+advertisement rather than by configuration.* An agent that needs speed adds cluster
+capacity (an announcement, then a route) or prewarms (*A, B, C, and the doorbell*). It
+does not get a faster path by skipping A, B, or C — there is no such path to give.
+
+**Named cost, taken from the source.** BGP converges slowly, by path exploration
+(Labovitz, Malan & Jahanian, SIGCOMM 2000), so a cluster on a tick inherits that shape:
+convergence is a property *over time* rather than an instant, and a route's history
+belongs in its score rather than in a footnote.
+
+**And the filed gap is the liveness one.** `SLA.md` §12 records that hold timer /
+keepalive was *not* adopted: *a name is not a heartbeat* (smoke-alarm#35). An
+announcement can outlive the thing it advertises, and the tick is a doorbell, not a
+proof of life. Until that is closed, a persistent address is a claim with no expiry of
+its own.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -335,6 +416,9 @@ the head only.
 - **A reservation that never completes blocks the doorbell.** A prewarmed slot held
   indefinitely is head-of-line blocking for everyone behind it, so reservations expire
   and return to the back of the queue rather than being held silently.
+- **A persisted address can outlive its state.** If the peer does not hold the mirrored
+  traffic, a role swap behind a stable address is a cold start wearing a warm address:
+  the address claim survives, the capability does not.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
