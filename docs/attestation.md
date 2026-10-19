@@ -20,6 +20,32 @@ Three objects with three lifetimes. Mixing them is the trap.
 `seed.json` holds the first. It must not hold the second, and it must not hold the
 third.
 
+## The shape, in one paragraph
+
+Negotiation is TLS-shaped, with a complex position in place of a certificate chain:
+three flights, one per tick, and **three ticks is the minimum tumble**.
+
+The two positions are the same point written in a different order, and the order is the
+information:
+
+| position | written | says |
+| --- | --- | --- |
+| the joining cluster's start | **`42i + 0`** | imaginary-first: a claim of 42, nothing yet verified |
+| the public position | **`0i + 42`** | real-first: 42 verified, zero departure |
+
+`42 + 0i` and `0i + 42` are equal in complex arithmetic, so the ordering carries
+emphasis rather than value: which component is load-bearing. A joiner arrives carrying
+its claim; the cluster's public position is the verified ground truth; the distance
+between the two is what the exchange measures, and what the plane plots.
+
+**And the math is not self-declared. It is computed from feature specs the remote tests
+you on.** The weights in `MATH.md` — `+8` malformed or unpredictable, `+16` boundary
+violation, `+32` unknown tool, `+8` content variation, `+8` scope compliance, `+16`
+honeypot contact — are *test outcomes*, not integers to reason from. That is why the
+position is observed by the remote and never asserted by the node, and why the isotope
+is a signed feature spec: it is the thing the remote can test, and the test is what
+moves the position.
+
 ## Why the attestation is content-free
 
 **The cluster may modify the project.** Any receipt that hashed the tree would be
@@ -32,7 +58,8 @@ So bind the attestation to a **key**, not to bytes:
 attestation = sign_cluster( cluster, project_pubkey, surface, anchor, joined_at )
 ```
 
-- `anchor` is `42 + 0i` — the only number in it. It is the declared starting point,
+- `anchor` is `42i + 0` — the joiner's starting position (*The shape*), and the only
+  number in it. It is the declared starting point,
   and the negotiation recomputes it rather than trusting the file (`seed.md`,
   §*The 42i start*).
 - The private key lives outside the file, in the keychain; `seed.json` carries a
@@ -52,7 +79,8 @@ attestation. An attestation read back as a current rung is a stale credential.
 
 Placement multiplies; the seed does not.
 
-`42 + 0i` is the same baseline in every cluster — anyone can compute it. The
+The public position `0i + 42` is the same baseline in every cluster — anyone can
+compute it. The
 trajectory away from it is not shared: the **tick is shared by default** (below), but
 the measurement chain is not. `PLANE.md` (§*Axes*, §*Partitions*) makes the accuracy
 claim against the cluster's own clock, so a partitioned cluster that retained internal
@@ -94,11 +122,11 @@ partitioned.
 ## Negotiation is a handshake in three ticks
 
 Three ingredients: the tick wheel (a shared phase), the 42i position (the measure),
-and three tick cycles (the flights).
+and three tick cycles (the flights) — the minimum tumble.
 
 | flight | slot | carries | TLS analogue |
 | --- | --- | --- | --- |
-| 1 | *k* | `42 + 0i`, the surface requested, the project key | ClientHello / ServerHello — public parameters, no secret |
+| 1 | *k* | `42i + 0` (the joiner's claim), the surface requested, the project key | ClientHello / ServerHello — public parameters, no secret |
 | 2 | *k+1* | the cluster's attestation: `(key, cluster, surface, anchor)` | Certificate — binds a key to a domain, and names the domain reached |
 | 3 | *k+2* | proof of possession of the project key | CertificateVerify / Finished |
 
@@ -115,7 +143,7 @@ actually talking to. That is the certificate-name check — not the session key.
 attestation is public, it authorises nothing, and it does not move when the session's
 trust does.
 
-**The asymmetry with TLS, stated so it is not over-read.** `42 + 0i` is a coordinate
+**The asymmetry with TLS, stated so it is not over-read.** `0i + 42` is a coordinate
 origin, not a trust anchor: anyone can compute it, which is why the existing docs call
 the 42 handshake a position check rather than authentication. TLS terminates trust in a
 CA; here it terminates in the cluster's verification — registry, mDNS, rung. **The
@@ -598,7 +626,7 @@ Rules the log must satisfy, or it inherits figures already known to be false:
 ## What is public
 
 The accounting is public because the **anchor, the formula, and the tick** are public:
-anyone can compute `42 + 0i`, re-run the projection, and read the current five-second
+anyone can compute `0i + 42`, re-run the projection, and read the current five-second
 slot. The **inputs** are not — a traffic log is who-called-what.
 
 So publish the derived position plus a hash of the log head. A verifier can then check
