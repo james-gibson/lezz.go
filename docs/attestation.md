@@ -163,6 +163,45 @@ pair: each plane contributes the encoder's `freq`/`phase`/`gain`/`decay`
 consistent. The tick's job is now stated precisely: it is how the phase is *sampled*,
 not how planes are compared.
 
+## A private plane is a private rotation — and that is where forward secrecy lives
+
+A cluster's own tick is not a degraded mode. It is a **plane with a rotation of its own
+relative to the default plane** — one that need not be published. Read that way, two
+properties that looked unrelated are the same property seen from different sides:
+partition tolerance (this plane is accurate while it cannot be related to the others)
+and forward secrecy (the relation cannot be recovered afterwards).
+
+That also completes the TLS analogy, which was missing its key exchange:
+
+| TLS | here | lifetime |
+| --- | --- | --- |
+| certificate | the attestation — binds a key to a domain | long |
+| (EC)DHE | the **rotation** for this session | one session |
+| Finished | possession proof bound to that rotation | one session |
+
+The attestation authenticates; it never protects. The protection is the ephemeral
+rotation, and the secret never travels: each side contributes to it and both compose
+the same result. (The *angle* is the model — the real secret has to come from a real
+group or KDF, because a bare real number carries no security.)
+
+**Four conditions, or the angle is a long-term key wearing a costume:**
+
+1. **Fresh per session.** A rotation derived from the attestation is not ephemeral and
+   gives nothing back after a compromise.
+2. **Drawn from a key space.** An angle sampled "somewhere in the circle" has no entropy
+   budget; the rotation must be a key, with a stated size.
+3. **Destroyed after use.** Retaining it means a later compromise decrypts the past —
+   which is the one thing forward secrecy is defined against.
+4. **Not reusable across sessions.** Resumption spends a *credential*, not a key: a
+   pre-baked receipt re-authorises the session but must still re-key it.
+
+**And there is a tension worth naming, not hiding.** The rotation is what must stay
+private, and the holonomy — the loop product — is what catches a forgery. Publishing the
+holonomy as a value discloses the composition of the very rotations it checks. So the
+loop check has to be a comparison of commitments, or an equality verdict computed inside
+the quorum, rather than a published angle. That is unresolved, and it belongs in *Open
+decisions*.
+
 ## The tick: a shared phase, not a shared counter
 
 The linear axis has a default source: `mod(UTC, 5s)`. It is public and computable by
@@ -200,9 +239,9 @@ and three tick cycles (the flights) — the minimum tumble.
 
 | flight | slot | carries | TLS analogue |
 | --- | --- | --- | --- |
-| 1 | *k* | `42i + 0` (the joiner's claim), the surface requested, the project key | ClientHello / ServerHello — public parameters, no secret |
+| 1 | *k* | `42i + 0` (the joiner's claim), the surface requested, the project key, and a commitment to the session rotation | ClientHello / ServerHello — public parameters, no secret |
 | 2 | *k+1* | the cluster's attestation: `(key, cluster, surface, anchor)` | Certificate — binds a key to a domain, and names the domain reached |
-| 3 | *k+2* | proof of possession of the project key | CertificateVerify / Finished |
+| 3 | *k+2* | proof of possession, bound to the completed rotation | CertificateVerify / Finished |
 
 **Why three slots, rather than as fast as possible.** The wheel gives alignment but no
 order inside a slot (*The tick*), so one flight per slot is what makes the sequence
@@ -762,6 +801,9 @@ the head only.
   consistent by choosing the rotation between them, so a pairwise check approves
   everything. The holonomy of a three-plane loop is the first check that can fail — and
   it only fails if all three were measured, which is why no edge may be skipped.
+- **An angle is not a key.** "A rotation somewhere on the circle" has no entropy
+  budget; forward secrecy starts when the rotation is drawn from a key space, with a
+  stated size, and ends the moment it is retained or derived from the attestation.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
@@ -826,6 +868,11 @@ claim time, and the attestation records that a binding exists.
    validity window is simple and refuses a returning client after it lapses; treating
    age as distance means a stale receipt still works but starts the session already
    departed. The second is more consistent with the measure and harder to explain.
+6. **How is the holonomy checked without publishing it?** The loop product is the
+   forgery check, and the rotations it multiplies are the secrets. Either the check is
+   over commitments (an equality verdict, no angle revealed), or it runs only inside
+   the quorum and the public sees a boolean. The first is stronger and needs a
+   commitment scheme; the second leaks nothing but trusts the quorum's report.
 
 ## See also
 
