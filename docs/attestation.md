@@ -390,6 +390,44 @@ The result is that a persistent address (`The fabric`) can be checked rather tha
 trusted: the address persists, the announcement may outlive its author, and the
 workspace is where the disagreement is visible.
 
+## Absence is not compromise
+
+*Your neighbours do not change their locks when you return from vacation. They might if
+someone broke into your house.*
+
+Two events that look alike from outside — you were not answering — with opposite
+consequences:
+
+| event | evidence | peer action |
+| --- | --- | --- |
+| **vacation** — silence | the record is as you left it | dampen: suppressed, not banned; no key change; resume on return |
+| **burglary** — compromise | the record shows writes you did not make, or a chain that no longer verifies | revoke, withdraw the routes, and tell the peers who shared state |
+
+A keepalive cannot tell these apart. A heartbeat that stops and restarts says nothing
+about the interval — it is the same silence either way. **A durable filesystem can**,
+and that is the stronger reason to keep one: on return, the bytes are either as you
+left them or they are not.
+
+Which makes the workspace a **tripwire**, not merely a liveness signal — but only
+under two conditions, and without them the burglar tidies up:
+
+- **the writer is identified** (single-writer, per-node sequence), so "a write I did
+  not make" is a meaningful sentence;
+- **the history is tamper-evident** (sequence plus hash chain), so a rewrite is
+  visible rather than merely different.
+
+That is the same chain the plane needs for its audit (`The two logs`), doing a second
+job: the store that makes the trajectory recomputable is also the object that
+distinguishes *nothing happened* from *something happened that I cannot account for*.
+
+Two corollaries worth keeping:
+
+- **Quiet is not a security event.** An idle node is on vacation; damping handles it
+  and nobody re-keys. The thing to act on is quiet *plus evidence of activity*.
+- **A break-in re-keys the neighbours, not the world.** Who must act is whoever shared
+  the compromised state — the mirror, the surface, the isotope records. That is a
+  scoped withdrawal, in the BGP sense (`The fabric`), not a global rotation.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -464,6 +502,9 @@ the head only.
 - **A persisted address can outlive its state.** If the peer does not hold the mirrored
   traffic, a role swap behind a stable address is a cold start wearing a warm address:
   the address claim survives, the capability does not.
+- **A store that can be rewritten without evidence turns a burglary into a vacation.**
+  Durability alone proves nothing about the interval; the sequence and the hash chain
+  are what make absence distinguishable from intrusion.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
