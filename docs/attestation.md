@@ -165,6 +165,48 @@ latency is still three slots after stabilisation; and a caller that genuinely ne
 placement up front asks for it (`--wait`, or awaiting `placed`) instead of every caller
 paying the fifteen seconds.
 
+## Who pays the fifteen seconds
+
+The three flights are the price of having **no identity to present**. They are not the
+price of connecting.
+
+| path | who | latency | what it may do |
+| --- | --- | --- | --- |
+| **pre-baked** | a client that already holds an isotope: an attestation receipt from a previous placement | one message — launch with the receipt | whatever the previous placement allowed, until revalidation says otherwise |
+| **cold** | a client with no identity | stabilise *K* + 3 slots | local verbs meanwhile; placed after flight 2 |
+| **visitor** | an agent that wants project-specific answers and no cluster capability | none | answers from the declaration and cached material |
+| **proxied** | a visitor that does need cluster capability | the proxy's | answered by a placed peer, on the proxy's placement |
+
+### Pre-baked: orientation without round trips
+
+This is what the attestation buys. It names the domain — cluster, surface, anchor — so
+a client holding one does not have to discover it. It presents the receipt and is
+oriented before it speaks: resumption, not a fresh handshake.
+
+But a pre-baked isotope is **a stale credential by construction**, and the lab's own
+measure says why that matters — *a stale credential and a clock skew are the same
+reading* (`PLANE.md`, §*Plane, not line*). So the receipt is admitted with its **age
+declared**: the slot it was issued, and slots elapsed. Revalidation against the
+cluster's head runs concurrently, and revocation can end the session.
+
+Age is an input to the plane, not a hidden property of the connection. Presenting a
+three-day-old receipt as current *is* a departure, and it should be counted as one
+rather than silently allowed. Entries in that window record `placement:
+resumed(receipt_seq, age_slots)` in the log, so a later revocation does not
+retroactively rewrite what was measured.
+
+### Visitors: project answers, no cluster
+
+An agent that just visits a project wants answers about that project — what it is, what
+it declares, where it sits — and does not need a cluster connection to get them. That
+path is served from the declaration (`seed.json`) and cached material (the last known
+plane position, the docs), with no handshake and no capability claim.
+
+When a visitor does need cluster capability, it is **proxied into a cached version**: a
+placed peer answers on its behalf, and the traffic log records `on_behalf_of`. Without
+that, the visitor's departures are attributed to the proxy's placement and the
+accounting is false — the proxy's rung would move for somebody else's calls.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -229,6 +271,10 @@ the head only.
 - **Unplaced is not untrusted, and the errors must not be merged.** "Not placed yet"
   is a wait state; "refused" is a verdict. Mapping both onto one error teaches callers
   to retry a trust failure as if it were latency.
+- **Resumption skips round trips, not checks.** A pre-baked receipt is oriented before
+  it speaks, but the domain it claims still has to be revalidated against the cluster's
+  head, and the session has to remain revocable. A resumed session that cannot be
+  revoked is a standing grant, which is what the attestation was designed not to be.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
@@ -286,6 +332,10 @@ claim time, and the attestation records that a binding exists.
    is easy to reason about but assumes the peer's clock drifts smoothly. A bound on
    observed skew (milliseconds) is the honest quantity, and much harder to specify
    against a five-second wheel.
+5. **How long is a pre-baked receipt valid, and is age capped or scored?** A hard
+   validity window is simple and refuses a returning client after it lapses; treating
+   age as distance means a stale receipt still works but starts the session already
+   departed. The second is more consistent with the measure and harder to explain.
 
 ## See also
 
