@@ -477,6 +477,55 @@ And it sharpens the earlier corollary: the neighbours who must re-key after a br
 are also the witnesses who make the break-in visible at all. The cost of a compromise is
 paid in the same graph that would detect it.
 
+## Fast to revoke, slow to re-approve
+
+*When a house is on fire the meter can be disconnected. But even if the electrics are
+perfectly fine, an electrician has to recertify before the power company touches it
+again.*
+
+The asymmetry is deliberate, because the two actions are not symmetrical claims:
+**cutting is always safe; restoring is a claim about the future.** So:
+
+- **Disconnect is unilateral and evidence-light.** Any peer may withdraw a route, drop a
+  session, or suppress a participant on suspicion — the mirror already gives it the
+  evidence to justify it, and refusing to serve cannot harm anyone. This is BGP
+  withdrawal, self-demotion, and dampening, and none of them needs agreement.
+- **Reconnection needs a certifier, and the node is not its own electrician.** Standing
+  belongs to a third party with something at stake (the neighbours, C in the triad, the
+  cluster that issued the attestation). A node's assertion that it is fine is exactly
+  the self-report the triad exists to refuse.
+
+**The meter sits upstream.** The disconnect point is outside the occupant's control,
+which is the same reason verification is never self-administered: whoever can cut the
+supply does not have to ask the house.
+
+Two restore paths, and the evidence class chooses — this is where the analogy corrects
+BGP:
+
+| class | signal | restore |
+| --- | --- | --- |
+| **noise** — a flap, a restart, the cat | dampening penalty | returns as the penalty decays; no inspection |
+| **compromise** — the burglar, the fire | evidence, not variance | recertification by a third party; **decay is not recertification** |
+
+BGP lets a dampened route return on time alone. That is right for a flap and wrong for
+a break-in: waiting is not an inspection, and an intruder benefits from a clock.
+
+**Recertification issues a new attestation, it does not un-revoke the old one.** The
+restored session carries a new sequence, a new `joined_at`, and names the certifier;
+the revoked receipt stays revoked forever, with both events in the log —
+`revoked(seq, by, cause)` then `recertified(seq, by, scope)`. That is what a ledger buys
+and a register cannot show, and it is the argument for the ledger in *Open decisions*.
+
+Two consequences that tighten earlier sections:
+
+- **Prewarm cannot pre-pay recertification.** It warms presence and surface
+  (*A, B, C, and the doorbell*); authority is the electrician's visit, and it happens at
+  use-time or not at all.
+- **The cold path is not a bug to optimise.** Its three slots are the inspection. The
+  fast path exists for receipts that were never revoked, not for ones that were; a
+  revoked receipt that arrives pre-baked is simply a disconnected meter presented for
+  reconnection.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -557,6 +606,9 @@ the head only.
 - **A witness inside the same failure domain is a mirror, not a witness.** Two processes
   on one host, or two clusters on one key, share the compromise and corroborate
   nothing; independence is what the evidence is made of.
+- **A revoked receipt never ages back into validity.** Decay restores a dampened route;
+  it does not restore a disconnection. Restoring requires a new attestation from a
+  certifier, because time is not an inspection.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
@@ -603,9 +655,12 @@ claim time, and the attestation records that a binding exists.
 
 ## Open decisions
 
-1. **Does existence survive absence?** A register (historical: the project existed
-   here at seq *n*) or a ledger (current: revocation is an entry too). This decides
-   whether the log is append-only in the strict sense.
+1. **Does existence survive absence — and does revocation?** A **register** records events
+   only (*this key was placed here at seq n*); a **ledger** records state changes too
+   (*revoked at n*, *recertified at m*), so "currently authorised" is derived rather
+   than assumed. *Fast to revoke, slow to re-approve* argues for the ledger: a register
+   cannot show that a receipt was revoked, or that a different one was certified after
+   it.
 2. **How much of the sequence is public** — the derived position only, or the position
    plus the head chain.
 3. **One keypair per project, or per cluster?** One is simpler; per-cluster isolates
