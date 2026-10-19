@@ -342,8 +342,53 @@ belongs in its score rather than in a footnote.
 **And the filed gap is the liveness one.** `SLA.md` §12 records that hold timer /
 keepalive was *not* adopted: *a name is not a heartbeat* (smoke-alarm#35). An
 announcement can outlive the thing it advertises, and the tick is a doorbell, not a
-proof of life. Until that is closed, a persistent address is a claim with no expiry of
-its own.
+proof of life. *Durable workspaces are the keepalive* (below) is the proposed closure;
+until it is built, a persistent address is a claim with no expiry of its own.
+
+## Durable workspaces are the keepalive
+
+The liveness gap (`SLA.md` §12: *a name is not a heartbeat*, smoke-alarm#35) closes
+without a hold timer, if the workspace is the record. That is what the workspaces work
+was for: a session store that is a **durable filesystem** — a VFS with drivers, not a
+process's memory (`lab-safety/lab/workspaces/`, `lezz.go/docs/queue-acp.md`).
+
+A keepalive is a message that asserts liveness. A durable record doesn't assert
+anything, so liveness has to be *derived*, by someone else, from whether the record
+advanced:
+
+| keepalive | durable workspace |
+| --- | --- |
+| periodic "I am alive" message | the record advances only if the writer acts |
+| timeout → withdraw | stagnation over *K* slots → dampen: suppressed, not banned |
+| self-reported | observed by the verifier from the artifact (`RECONCILE.md`: B holds A's records) |
+| restart loses state | restart resumes the store — `graceful restart`, for free |
+
+That is the useful inversion: **nobody has to be asked whether they are alive.** The
+tick says *when to look*; the store says *whether anything happened*. A node that has
+stopped is not marked down by its own admission — it is missing from its own record,
+and the neighbour that holds the mirror can see it.
+
+Four things this does not do, and they matter:
+
+- **A durable file is not a live participant.** A crashed process leaves its store
+  intact. Existence is not freshness; only advancement is, and only a third party
+  should judge it. A frozen writer with a healthy store looks alive to anyone checking
+  for the file rather than for movement.
+- **Freshness is per writer, not per directory.** The store is single-writer by design
+  (`queue-acp.md`: *the workspace has exactly one writer*), so the advancement is only
+  meaningful against a known writer. Two writers make the signal unreadable — which is
+  the same rule that keeps the directory from being written by two clusters.
+- **mtime is a local clock.** Ordering within a cluster may use it; comparison across
+  clusters uses the tick, because `mod(UTC, 5s)` is the clock both sides can compute
+  and a local mtime is not.
+- **Persistence is not presence.** A store also preserves the record of a node that is
+  gone, which is what the accounting wants and what presence must never read. That is
+  the register-vs-ledger decision (*Open decisions*), now with a physical
+  consequence: the same bytes serve history and would falsely serve liveness.
+
+The result is that a persistent address (`The fabric`) can be checked rather than
+trusted: the address persists, the announcement may outlive its author, and the
+workspace is where the disagreement is visible.
 
 ## The two logs
 
