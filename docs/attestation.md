@@ -46,6 +46,46 @@ position is observed by the remote and never asserted by the node, and why the i
 is a signed feature spec: it is the thing the remote can test, and the test is what
 moves the position.
 
+## Verification is a question, not an inspection
+
+The remote never reads your internals. It asks a reproducible question:
+
+> *I have these records, and I process them this way. Do you?*
+
+Three parts, and the answer only means something against all three:
+
+| part | what it is | why the remote needs it |
+| --- | --- | --- |
+| **records** | a digest and a log range (or head) | to know *which* inputs the claim is about |
+| **processing** | the formula version and the isotope (feature spec) | to know *how* the answer was derived |
+| **result** | the position | to compare |
+
+Agreement is the answer, and disagreement localises itself — which is what makes it
+useful rather than merely binary:
+
+| records | processing | result | reading |
+| --- | --- | --- | --- |
+| same | same | differs | a bug or a false claim: the only case that accuses |
+| differs | same | — | you are missing evidence, or we are on different logs |
+| same | differs | — | different formula version: reconcile, do not accuse |
+| differs | differs | — | unrelated claims; nothing to compare |
+
+**Three answers, not two.** *Do you?* can be answered **"I cannot — I do not have those
+records."** That is unverifiable, and unverifiable is not false; merging them is the same
+error as merging *not placed yet* with *refused*. The log records which of the three,
+because a claim that was never checkable is not a claim that failed.
+
+**And the claim is a commitment, not a disclosure.** "I have these records" is a digest
+and a head, not the records themselves; the remote can check the answer without being
+shown the traffic. That is the same trade as the content-free attestation: what is proved
+is *agreement*, not transparency. It is why the position can be public while the inputs
+stay private, and why the isotope is a feature spec rather than a certificate — it is a
+question the remote can ask, and the answer is arithmetic.
+
+That is also the whole of the tumble, stated without the ceremony: the flights carry the
+three parts, and the only thing that makes the exchange trustworthy is that the remote
+does the last step itself.
+
 ## Why the attestation is content-free
 
 **The cluster may modify the project.** Any receipt that hashed the tree would be
@@ -680,6 +720,10 @@ the head only.
 - **A passing spec is not a passing run.** A canonical isotope is stable by design, so
   the token proves the promise and not the moment; without a fresh challenge bound into
   the run, an old pass re-certifies forever.
+- **Agreement is not correctness.** *Do you?* detects divergence, not error: two nodes
+  that share a bug share an answer, and a shared formula bug is exactly the figure
+  `MATH.md` calls "internally consistent, externally false". Consensus bounds who can
+  lie, never whether the arithmetic is right.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
