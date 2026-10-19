@@ -120,17 +120,48 @@ attestation. An attestation read back as a current rung is a stale credential.
 Placement multiplies; the seed does not.
 
 The public position `0i + 42` is the same baseline in every cluster — anyone can
-compute it. The
-trajectory away from it is not shared: the **tick is shared by default** (below), but
-the measurement chain is not. `PLANE.md` (§*Axes*, §*Partitions*) makes the accuracy
-claim against the cluster's own clock, so a partitioned cluster that retained internal
-accuracy remains accurate on reconnection. A project in three clusters has three
-readings, not one sum.
+compute it. The trajectory away from it is not shared: the **tick is shared by default**
+(below), but the measurement chain is not. `PLANE.md` (§*Axes*, §*Partitions*) makes the
+accuracy claim against the cluster's own clock, so a partitioned cluster that retained
+internal accuracy remains accurate on reconnection. A project in three clusters has
+three readings, not one sum.
 
 The distance is a formula over observable inputs, **not stored state**
-(`PLANE.md`, §*The computation*). Two clusters on the same tick can be *compared* at
-the same slot; they cannot be *added*, because that would assume one formula and one
-observer chain. Comparison and addition are different operations.
+(`PLANE.md`, §*The computation*). Clusters can be *compared*; they cannot be *added*,
+because addition would assume one formula and one observer chain.
+
+## Intervals are relative; the rotation is the invariant
+
+Between disparate planes **any number of intervals can occur** — clocks differ,
+partitions last, queues drain — so counting intervals between two clusters measures the
+path taken, not the planes. This replaces the weaker claim that comparison needs the
+same slot: agreement on *when* was never the point.
+
+A complex number carries two independent facts, and the design uses both:
+
+| part | quantity | answers |
+| --- | --- | --- |
+| **modulus** | the 42i distance | how far this plane has departed from nominal |
+| **argument** | the rotation | how this plane is turned relative to another |
+
+Rotation composes by multiplication; intervals compose by counting. Only one of the two
+is invariant to how many intervals happened to be observed — which is why **the rotation
+is the ultimate quantity and the interval is a sampling artefact.**
+
+**The loop is the check, not the pair.** Two planes can always be made to agree by
+choosing the rotation between them; two numbers always can be fitted. A loop cannot:
+multiply *A → B → C → A* and the product must be the identity. Its departure is the
+**holonomy** — the curvature of the space — and no single edge can fake it, because
+every plane contributes to the result. `isotope/plane` implements exactly this (`edge`,
+`triple`, `holonomy`), and it is the same reason three is the smallest number that
+closes a loop: the golden triangle both closes the loop and gives a fault a neighbour to
+fall to (`RECONCILE.md`).
+
+So the cross-cluster check is a **loop over per-plane phase**, not a comparison across a
+pair: each plane contributes the encoder's `freq`/`phase`/`gain`/`decay`
+(`PLANE.md`, §*Projection into the plane*), and the holonomy says whether the set is
+consistent. The tick's job is now stated precisely: it is how the phase is *sampled*,
+not how planes are compared.
 
 ## The tick: a shared phase, not a shared counter
 
@@ -143,7 +174,9 @@ first agreeing on a counter or an authority.
 Two things it does and does not buy:
 
 - **Alignment, yes.** A position sampled in cluster A at slot *k* and one sampled in
-  cluster B at slot *k* are readings of the same phase, and may be compared.
+  cluster B at slot *k* are readings of the same phase, and may be compared. The slot is
+  the *easiest* way to establish the rotation, not the only one (*Intervals are
+  relative*).
 - **Order, no.** `mod` discards the cycle, so slot *k* recurs every five seconds. An
   entry carrying only a slot can be replayed as "this tick" indefinitely — the stale
   credential's failure mode, in time. Freshness needs the absolute timestamp (or a
@@ -155,9 +188,10 @@ tick and cannot be ordered by it. An entry that needs sub-slot ordering carries 
 absolute time; the tick is the coordinate, not the clock.
 
 A cluster may run its own tick instead — the federation's heartbeat and announce
-intervals are the internal variant (`PLANE.md`, §*Axes*). A plane on a private tick is
-comparable only to itself: that is the partition case, and it remains accurate while
-partitioned.
+intervals are the internal variant (`PLANE.md`, §*Axes*). A plane on a private tick has
+no *default* relation to another, so it is comparable only once a rotation between them
+has been established; the shared tick is simply the cheapest way to establish one. That
+is the partition case, and the plane remains accurate while partitioned.
 
 ## Negotiation is a handshake in three ticks
 
@@ -724,6 +758,10 @@ the head only.
   that share a bug share an answer, and a shared formula bug is exactly the figure
   `MATH.md` calls "internally consistent, externally false". Consensus bounds who can
   lie, never whether the arithmetic is right.
+- **A pair is always reconcilable; only a loop constrains.** Any two planes can be made
+  consistent by choosing the rotation between them, so a pairwise check approves
+  everything. The holonomy of a three-plane loop is the first check that can fail — and
+  it only fails if all three were measured, which is why no edge may be skipped.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
