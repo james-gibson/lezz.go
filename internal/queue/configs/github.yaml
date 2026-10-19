@@ -1,0 +1,20 @@
+# lezz-owned queue sidecar for the GitHub CLI.
+#
+# adhd.gh.run sends {args, wait:true} here when ADHD_GH_QUEUE_URL is set. The
+# spool absorbs bursts, the token bucket respects the API quota, and the caller
+# gets a completion result instead of hammering the API.
+name: github
+dir: ~/.lezz/queues/github
+listen: 127.0.0.1:0
+max_batch: 5
+max_wait: 250ms
+rate_per_sec: 5
+burst: 5
+concurrency: 1
+max_depth: 50
+fsync: false
+# Durable mirror (lab-safety#5): the file spool is the queue of record, sqlite
+# is the second driver. One writer, both drivers; reconcile on start.
+sqlite_mirror: ~/.lezz/queues/github/queue.db
+upstream: gh
+command: gh

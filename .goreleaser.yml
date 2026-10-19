@@ -10,6 +10,7 @@ builds:
     binary: lezz
     ldflags:
       - -s -w -X main.buildVersion={{.Version}}
+      - -X main.buildGitHubClientID={{ .Env.LEZZ_GITHUB_CLIENT_ID }}
     env:
       - CGO_ENABLED=0
     goos:

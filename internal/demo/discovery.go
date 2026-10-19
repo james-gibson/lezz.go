@@ -23,9 +23,10 @@ const mdnsDomain = "local."
 
 // ProjectEntry describes a project within a cluster that exposes an MCP server.
 type ProjectEntry struct {
-	Name   string `json:"name"`    // short name, e.g. "tuner", "adhd"
-	Repo   string `json:"repo"`    // GitHub slug, e.g. "james-gibson/tuner"
-	MCPURL string `json:"mcp_url"` // base URL of the project's MCP server
+	ID     string `json:"id,omitempty"` // stable seed id; namespaces the tool
+	Name   string `json:"name"`         // short name, e.g. "tuner", "adhd"
+	Repo   string `json:"repo"`         // GitHub slug, e.g. "james-gibson/tuner"
+	MCPURL string `json:"mcp_url"`      // base URL of the project's MCP server
 }
 
 // ClusterInfo describes a running demo cluster.
@@ -214,6 +215,12 @@ func BrowseDemoCluster(ctx context.Context, timeout time.Duration) ([]ClusterInf
 	case <-browseCtx.Done():
 		return nil, fmt.Errorf("no lezz demo cluster found on the LAN within %s", timeout)
 	}
+}
+
+// FetchRegistry retrieves the full cluster registry from a /cluster endpoint.
+// It is the exported read path used by `lezz see`.
+func FetchRegistry(ctx context.Context, url string) ([]ClusterInfo, error) {
+	return fetchAllClusters(ctx, url)
 }
 
 // fetchAllClusters retrieves the full cluster registry from a /cluster endpoint.

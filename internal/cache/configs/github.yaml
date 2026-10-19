@@ -1,0 +1,13 @@
+# lezz-owned read-through cache for GitHub pull requests.
+#
+# Five agents asking for the same PR should cause one `gh` call, not five.
+# Concurrent misses are single-flighted; fresh reads never touch GitHub.
+name: github
+dir: ~/.lezz/cache/github
+sqlite: ~/.lezz/cache/github/cache.db
+listen: 127.0.0.1:0
+ttl: 60s
+max_stale: 24h
+command: gh
+max_body_bytes: 16777216
+repo_allow: []

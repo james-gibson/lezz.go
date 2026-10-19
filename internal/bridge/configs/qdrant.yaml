@@ -1,0 +1,21 @@
+# lezz-owned static bridge definition.
+#
+# This is the only place a stdio command is declared. adhd never receives it:
+# it learns the loopback HTTP URL through the cluster join, so `adhd.proxy` and
+# `adhd.project.<name>.call` stay HTTP-only.
+name: qdrant
+repo: james-gibson/mcp-lab
+command: uvx
+args:
+  - mcp-server-qdrant
+env:
+  # A scratch collection for the prototype. Override with QDRANT_COLLECTION.
+  COLLECTION_NAME: ${QDRANT_COLLECTION:-lezz-bridge-proto}
+  QDRANT_URL: ${QDRANT_URL}
+  QDRANT_API_KEY: ${QDRANT_API_KEY}
+  EMBEDDING_MODEL: ${QDRANT_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+listen: 127.0.0.1:0
+allowed_tools:
+  - qdrant-find
+  - qdrant-store
+request_timeout: 120s

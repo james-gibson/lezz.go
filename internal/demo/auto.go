@@ -256,6 +256,9 @@ func printRegistry(clusters []ClusterInfo) {
 		fmt.Printf("    alarm-a  %s\n", c.AlarmA)
 		fmt.Printf("    alarm-b  %s\n", c.AlarmB)
 		fmt.Printf("    adhd     %s\n", c.AdhdMCP)
+		for _, p := range c.Projects {
+			fmt.Printf("    project  %-10s %s\n", p.Name, p.MCPURL)
+		}
 	}
 }
 
@@ -328,6 +331,16 @@ func RunAuto(ctx context.Context) error {
 	alarmBLogPath := tmpRoot + "/alarm-b.log"
 	adhdLogPath := tmpRoot + "/adhd.log"
 
+	// --- Start lezz-owned stdio skills --------------------------------------
+	// lezz owns the static config and the process; the cluster only sees the
+	// loopback HTTP endpoint. Starting before the alarms means the URL exists
+	// when the skill is registered and published to adhd.
+	bridges, err := startBridges(ctx, tmpRoot)
+	if err != nil {
+		return err
+	}
+	defer closeBridges(bridges)
+
 	alarmBin, err := tools.Find("ocd-smoke-alarm")
 	if err != nil {
 		return fmt.Errorf("resolve ocd-smoke-alarm: %w", err)
@@ -396,7 +409,7 @@ func RunAuto(ctx context.Context) error {
 		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
 		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
 		AdhdMCP:  fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
-		Projects: projectSeedsFromEnv(),
+		Projects: append(projectSeedsFromEnv(), bridgeProjects(bridges)...),
 	}
 
 	// --- Start discovery BEFORE adhd so `adhd --demo` can find the base -----
@@ -424,6 +437,14 @@ func RunAuto(ctx context.Context) error {
 			defer deregFn()
 		}
 	}
+
+	// --- Announce lezz-owned skills to the alarm registry -------------------
+	// The smoke-alarm is the lab's discovery surface: /isotope/list names the
+	// skill and the rung assigned by VerifyTrust.
+	registerBridges(ctx, bridges,
+		fmt.Sprintf("http://127.0.0.1:%d", portA),
+		fmt.Sprintf("http://127.0.0.1:%d", portB),
+	)
 
 	// --- Start adhd headless in demo-discovery mode -------------------------
 	// No hardcoded config: adhd builds its smoke_alarm endpoints from whatever
@@ -467,6 +488,14 @@ func RunAuto(ctx context.Context) error {
 
 	// --- Query isotope trust level from alarm-a -----------------------------
 	trustSummary := queryIsotopeTrust(ctx, smokeAlarmURL)
+
+	if len(bridges) > 0 {
+		fmt.Println("\nlezz-owned skills (stdio behind loopback HTTP):")
+		for _, br := range bridges {
+			fmt.Printf("  %-10s %s  (%s %s)\n", br.cfg.Name, br.b.URL(), br.cfg.Command, strings.Join(br.cfg.Args, " "))
+			fmt.Printf("  %-10s adhd tool: adhd.project.%s.call\n", "", br.cfg.Name)
+		}
+	}
 
 	// --- Print summary ------------------------------------------------------
 	fmt.Printf(`

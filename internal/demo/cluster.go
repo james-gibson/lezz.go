@@ -344,7 +344,12 @@ func clusterJoinParams(info ClusterInfo) []byte {
 	if len(info.Projects) > 0 {
 		projs := make([]map[string]interface{}, 0, len(info.Projects))
 		for _, p := range info.Projects {
+			id := p.ID
+			if id == "" {
+				id = p.Name
+			}
 			projs = append(projs, map[string]interface{}{
+				"id":      id,
 				"name":    p.Name,
 				"repo":    p.Repo,
 				"mcp_url": p.MCPURL,

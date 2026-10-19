@@ -11,6 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      LEZZ_GITHUB_CLIENT_ID: ${{ vars.LEZZ_GITHUB_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -51,9 +51,10 @@ jobs:
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: arm64
+          LEZZ_GITHUB_CLIENT_ID: ${{ vars.LEZZ_GITHUB_CLIENT_ID }}
         run: |
           mkdir -p layer/files
-          go build -trimpath -ldflags="-s -w" -o layer/files/lezz ./cmd/lezz
+          go build -trimpath -ldflags="-s -w -X main.buildGitHubClientID=${LEZZ_GITHUB_CLIENT_ID:-}" -o layer/files/lezz ./cmd/lezz
           file layer/files/lezz || true
 
       # ---------------------------------------------------------------

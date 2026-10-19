@@ -46,9 +46,30 @@ lezz service remove <tool> [profile]  # unload and remove the plist
 lezz service list                      # show all managed LaunchAgents and their status
 lezz service purge                     # stop and remove all managed services
 
+# macOS application bundle (TCC permissions / passkey identity)
+lezz app install [--dock]              # build and sign ~/Applications/Lezz.app
+lezz app open [-- args...]             # launch via LaunchServices (default: auto)
+lezz app info                          # show bundle identity and signature
+lezz app uninstall [--force]           # remove Lezz.app
+
+# GitHub device-flow auth (quick path; token in keychain)
+lezz auth github                       # sign in with a GitHub OAuth App
+lezz auth status                       # verify the stored GitHub identity
+lezz auth logout                       # remove the token and metadata
+
+# Editor wiring
+lezz agent setup [editor]              # wire the workspace agent into Zed's settings
+lezz agent remove [editor]             # remove it (requires --yes)
+lezz agent show [editor]               # show what is wired
+
 # Full reset
 lezz purge                             # stop services, remove binaries, clear Go caches
 ```
+
+`lezz auth github` uses the OAuth **device flow**: the client ID is public and is
+embedded at build time (`-X main.buildGitHubClientID=<id>`), and no client secret
+is used. See [docs/github-auth.md](docs/github-auth.md) for creating the OAuth
+App and the storage/security model.
 
 ---
 
@@ -158,6 +179,32 @@ followers automatically.
 
 ---
 
+## lezz agent
+
+`lezz agent setup` writes the workspace agent into an editor's settings so the
+virtual tree is reachable from the Agent Panel. Zed is supported; its settings
+file is `~/.config/zed/settings.json` (or `$XDG_CONFIG_HOME/zed/settings.json`).
+
+```sh
+lezz agent setup zed --command /path/to/workspace-agent
+lezz agent show zed
+lezz agent remove zed --yes
+```
+
+The command is resolved in this order: `--command`, `$LEZZ_WORKSPACE_AGENT`,
+`~/.lezz/bin/workspace-agent`, then `workspace-agent` on `PATH`. If none resolve,
+lezz refuses rather than writing an entry that cannot start. The default args run
+the agent on the tmpdir host, rooted at `~/.lezz/workspaces/<session>`.
+
+The settings file is JWCC (JSON with comments and trailing commas), so the edit
+is a **splice**: only `agent_servers.<name>` is written, and every other byte —
+key order, comments, unrelated agents — is left alone. The result is re-parsed
+and compared against the original before the write, and a
+`settings.json.bak-YYYYMMDD-HHMMSS` copy is made first. `--dry-run` prints the
+entry without touching the file. Zed detects the change without a restart.
+
+---
+
 ## lezz update
 
 `lezz update` checks GitHub for a newer release and atomically replaces the running binary.
@@ -246,6 +293,9 @@ lezz.go/
 ├── cmd/lezz/              — CLI entry point and command handlers
 ├── internal/
 │   ├── service/           — LaunchAgent install / unload / list (macOS launchd)
+│   ├── appbundle/         — macOS .app bundle, codesign, LaunchServices launch
+│   ├── credential/        — Keychain / 0600-file secret store seam
+│   ├── githubauth/        — GitHub device flow, token metadata
 │   ├── demo/              — Demo cluster bring-up and cluster summary
 │   ├── tools/             — Binary download, version checking, registry, purge
 │   └── selfupdate/        — lezz self-update logic (pseudo-version detection)
