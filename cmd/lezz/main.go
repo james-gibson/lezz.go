@@ -32,6 +32,7 @@ import (
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
 	"github.com/james-gibson/lezz.go/internal/service"
 	"github.com/james-gibson/lezz.go/internal/tools"
+	"github.com/james-gibson/lezz.go/internal/workspaceagent"
 
 	"github.com/james-gibson/isotope"
 )
@@ -135,7 +136,7 @@ func main() {
 		cmdService()
 
 	case "agent":
-		cmdAgent()
+		cmdAgent(ctx)
 
 	case "start":
 		cmdStart()
@@ -827,14 +828,18 @@ func cmdServicePurge() {
 	fmt.Printf("removed %d service(s)\n", len(services))
 }
 
-// lezz agent setup|remove|show [editor]
+// lezz agent setup|remove|show|build [editor]
 // Wires an ACP agent into an editor's settings. Only the agent's own
 // `agent_servers` member is touched; the rest of the file, including comments,
 // is left byte-for-byte alone.
-func cmdAgent() {
+func cmdAgent(ctx context.Context) {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: lezz agent setup|remove|show [editor] [flags]")
+		fmt.Fprintln(os.Stderr, "usage: lezz agent setup|remove|show|build [editor] [flags]")
 		os.Exit(1)
+	}
+	if os.Args[2] == "build" {
+		cmdAgentBuild(ctx)
+		return
 	}
 	action := os.Args[2]
 	rest := os.Args[3:]
@@ -854,6 +859,8 @@ func cmdAgent() {
 	root := fs.String("root", "", "the workspace root (default ~/.lezz/workspaces/<session>)")
 	session := fs.String("session", "42", "the workspace session id")
 	spec := fs.String("spec", "", "seed the session from this Gherkin spec")
+	src := fs.String("src", "", "workspace-agent source (lab-safety checkout or agent module)")
+	noBuild := fs.Bool("no-build", false, "do not fetch/build workspace-agent when it is missing")
 	_ = fs.Parse(rest)
 
 	if editor != "zed" {
@@ -873,22 +880,63 @@ func cmdAgent() {
 
 	switch action {
 	case "setup":
-		cmdAgentSetup(path, *name, *command, *root, *session, *spec, *dryRun)
+		cmdAgentSetup(ctx, path, *name, *command, *root, *session, *spec, *src, *dryRun, *noBuild)
 	case "remove":
 		cmdAgentRemove(path, *name, *dryRun, *yes)
 	case "show":
 		cmdAgentShow(path, *name)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown agent action %q; use setup, remove, or show\n", action)
+		fmt.Fprintf(os.Stderr, "unknown agent action %q; use setup, remove, show, or build\n", action)
 		os.Exit(1)
 	}
 }
 
-func cmdAgentSetup(path, name, command, root, session, spec string, dryRun bool) {
+func cmdAgentBuild(ctx context.Context) {
+	fs := flag.NewFlagSet("agent build", flag.ContinueOnError)
+	src := fs.String("src", "", "lab-safety checkout or agent module (default: ~/.lezz/src/lab-safety)")
+	out := fs.String("out", "", "output path (default: ~/.lezz/bin/workspace-agent)")
+	noFetch := fs.Bool("no-fetch", false, "use the existing source checkout without git fetch")
+	if err := fs.Parse(os.Args[3:]); err != nil {
+		os.Exit(1)
+	}
+	path, err := workspaceagent.Build(ctx, workspaceagent.Options{
+		Source:  expandHome(*src),
+		Out:     expandHome(*out),
+		NoFetch: *noFetch,
+		Stdout:  os.Stderr,
+		Stderr:  os.Stderr,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agent build:", err)
+		os.Exit(1)
+	}
+	if rev := workspaceagent.SourceRevision(expandHome(*src)); rev != "" {
+		fmt.Printf("built %s (source %s)\n", path, rev)
+		return
+	}
+	fmt.Printf("built %s\n", path)
+}
+
+func cmdAgentSetup(ctx context.Context, path, name, command, root, session, spec, src string, dryRun, noBuild bool) {
 	cmdPath, err := resolveAgentCommand(command)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "agent setup:", err)
-		os.Exit(1)
+		// A local path or LEZZ_WORKSPACE_AGENT was supplied: respect it and do
+		// not silently build a different binary.
+		if dryRun || noBuild || command != "" || os.Getenv("LEZZ_WORKSPACE_AGENT") != "" {
+			fmt.Fprintln(os.Stderr, "agent setup:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "workspace-agent not found; building from source (use --no-build to disable)...")
+		built, buildErr := workspaceagent.Build(ctx, workspaceagent.Options{
+			Source: expandHome(src),
+			Stdout: os.Stderr,
+			Stderr: os.Stderr,
+		})
+		if buildErr != nil {
+			fmt.Fprintln(os.Stderr, "agent setup:", buildErr)
+			os.Exit(1)
+		}
+		cmdPath = built
 	}
 	if root == "" {
 		home, homeErr := os.UserHomeDir()
@@ -972,10 +1020,16 @@ func cmdAgentShow(path, name string) {
 // rather than writing an entry that cannot start.
 func resolveAgentCommand(explicit string) (string, error) {
 	if explicit != "" {
-		return explicit, nil
+		if p, err := resolveExecutable(explicit); err == nil {
+			return p, nil
+		}
+		return "", fmt.Errorf("workspace-agent %q not found (pass an existing path or a command on PATH)", explicit)
 	}
 	if v := os.Getenv("LEZZ_WORKSPACE_AGENT"); v != "" {
-		return v, nil
+		if p, err := resolveExecutable(v); err == nil {
+			return p, nil
+		}
+		return "", fmt.Errorf("LEZZ_WORKSPACE_AGENT=%q not found (unset it or point it at an existing binary)", v)
 	}
 	if binDir, err := tools.BinDir(); err == nil {
 		p := filepath.Join(binDir, "workspace-agent")
@@ -987,8 +1041,15 @@ func resolveAgentCommand(explicit string) (string, error) {
 		return p, nil
 	}
 	return "", fmt.Errorf(`workspace-agent not found
-  build it:  (cd lab-safety/lab/agent && go build -o ~/.lezz/bin/workspace-agent ./cmd/workspace-agent)
+  build it:  lezz agent build
   or pass:   --command /path/to/workspace-agent`)
+}
+
+func resolveExecutable(v string) (string, error) {
+	if st, err := os.Stat(v); err == nil && !st.IsDir() {
+		return v, nil
+	}
+	return exec.LookPath(v)
 }
 
 func cmdVersion() {
@@ -1569,6 +1630,7 @@ Usage:
   lezz service list                  List all installed lezz services
   lezz service purge                 Unload and remove all lezz services
   lezz agent setup [editor]          Wire an ACP agent into an editor's settings
+  lezz agent build [--src DIR]       Fetch/build workspace-agent into ~/.lezz/bin
   lezz agent remove [editor]         Remove it (requires --yes)
   lezz agent show [editor]           Show the wired agent
   lezz version                       Print version
