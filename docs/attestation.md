@@ -923,9 +923,21 @@ Rules the log must satisfy, or it inherits figures already known to be false:
 
 ## What is public
 
-The accounting is public because the **anchor, the formula, and the tick** are public:
-anyone can compute `0i + 42`, re-run the projection, and read the current five-second
-slot. The **inputs** are not — a traffic log is who-called-what.
+The accounting is public because the **anchor, the formula, the contract, and the tick**
+are public: anyone can compute `0i + 42`, re-run the projection, read the declared
+contract it derived from, and read the current five-second slot. The **inputs** are not —
+a traffic log is who-called-what.
+
+**Frame-relative, so publish the frame with the value.** The position is derived through
+*your* encoder, so a bare number means nothing to anyone else. Publish
+`(contract hash, name, value)`: the declaration set that produced the number, the universe
+it names, and the number. Without its contract a position is an opinion with a decimal
+point.
+
+**And the `plane` vector itself is private.** Its dimension and ordering are per-corpus
+(`2 × #compendia`, and the `names` list is yours), so it cannot be an accounting artefact —
+only the named scalar projections can. The vector is a local embedding; the *name* is the
+shared coordinate.
 
 So publish the derived position plus a hash of the log head. A verifier can then check
 that history was not rewritten without reading the traffic. That is the same split as
@@ -1079,6 +1091,37 @@ claim time, and the attestation records that a binding exists.
    the secret. What remains open is the shape of the commitments the log carries, so a
    verifier can confirm the observations are the ones the session used — without the log
    ever holding a seed.
+
+## Status
+
+**Implemented and running** (outside this document):
+
+- the `plane` projection and its derivation — the vault's indexer reads the `plane:`
+  contract, derives `.plane-weights.json`, and gates the cache on `plane_hash`;
+- the two builds — generic at the `42i` hypothesis state, and `-tags loreweights` carrying
+  the corpus model, shipped as a SOPS blob;
+- signature-gated syncs for `isotope_weights`, `local_time_universes`, `docs_sites`;
+- durable workspaces — one writer, drivers, and the ACP shim over the store;
+- the verification exercises — ingress → verifier → monitor, the honeypot, and the
+  reconciliation of a disagreement;
+- `lezz seed init` / `lezz see` — which prepares the negotiation inputs and does not join.
+
+**Designed here, not built:**
+
+- the three-flight tumble at one flight per tick, and stabilise-then-place with
+  *unplaced ≠ surface*;
+- the attestation, its revocation, and recertification by a fresh isotope plus challenge;
+- prewarm and registration, the FIFO doorbell, and slot-reservation expiry;
+- the per-cluster plane with a private rotation, and forward secrecy on the session
+  rotation;
+- the witness loop, the holonomy check over commitments, and the durable workspace as a
+  tripwire.
+
+**Measured, not yet met:** the portability score. Every declared tensor edge currently has
+`w: unset`, so the coupling is fully backfilled and the ranking is local.
+
+**Open:** the six decisions above, and the challenge-binding format that makes
+recertification non-replayable.
 
 ## See also
 
