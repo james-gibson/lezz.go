@@ -160,11 +160,44 @@ which is what `plane_universe_id` in the payload is for. Where two corpora do no
 a name there is nothing to compare, and the relation between the frames is a *rotation*,
 not an equality (*A private plane is a private rotation*).
 
-Portability is therefore a choice, not an upgrade:
+### Declared versus backfilled — and that is what local-time is for
 
-1. **Share the contract.** A canonical corpus — the golden cluster as reference — makes
-   the derivation reproducible and the rankings coincide. It also makes everyone adopt
-   somebody's judgements, which is the cost.
+The line that decides portability is not "weights or no weights". It is **declared
+versus backfilled**:
+
+| slot | who fills it | travels? |
+| --- | --- | --- |
+| charges, `presupposes`, tensor edges, `reality-gradient`, `zero-status` | the contract (frontmatter) | yes — public, auditable, re-derivable |
+| encoder slots the contract leaves empty | the local corpus (backfill) | no |
+| tensor weights left `w: unset` | cosine over the local embeddings | no |
+
+The indexer's own rule is *the contract wins; fastembed only backfills slots the contract
+leaves empty*. So a hole in the contract is filled by whatever the local corpus says, and
+that is local by definition. **Portability is contract completeness**, not a choice of
+philosophy: a fully declared contract derives the same weights everywhere, and every hole
+is a place where two parties diverge.
+
+That is what `local-time` is for — **sourcing the public form of the weights**: epochs,
+conditions (`nominalSpanMs`/`realSpanMs`), keyframes and the `plane:` declarations in one
+public, versioned place, so the numbers are *derived from declarations* rather than fitted
+to text.
+
+And it gives the criterion a number instead of an argument: **count the backfilled
+slots.** Today the corpus declares tensor edges but leaves every `w` unset (its README
+says so — "`w: unset` — true for every declared edge in the current corpus"), so the
+coupling is 100% backfilled. That is exactly why the ranking does not travel yet. The
+count belongs in `.plane-set-state.json` beside `plane_hash`, because it is the
+portability score.
+
+If the contract is completed, the first option below stops being "adopt somebody's
+corpus" and becomes the much weaker "adopt a published declaration set" — which anyone
+can verify and derive from, without inheriting a private text.
+
+Portability is therefore a choice, with local-time as the attempt at the first:
+
+1. **Share the contract.** A *complete* public declaration set — not a canonical corpus —
+   makes the derivation reproducible and the rankings coincide. What is still adopted is
+   the declarations themselves, which remain judgements.
 2. **Share the algebra only.** Everyone keeps a local ranking and compares structure and
    holonomy. That is the BGP answer, and it requires nobody to accept another party's
    editorial position.
@@ -172,6 +205,12 @@ Portability is therefore a choice, not an upgrade:
 And a hash proves nothing across parties: equal hashes mean the contracts match, and
 unequal hashes mean the contracts differ — not that either is wrong. So *do you?* across
 parties must be asked of `(name, value, structure)`, never of `(hash, rank)`.
+
+**What local-time cannot do** is make the judgements objective. `reality-gradient` and
+`zero-status` are editorial positions that become *public claims* when declared — stated,
+auditable, comparable — not facts. Two parties can derive identical weights from the same
+contract and still disagree about whether the contract is right. That is *agreement is not
+correctness* one level up: shared derivation, shared opinion, no shared truth.
 
 ## Verification is a question, not an inspection
 
@@ -968,6 +1007,9 @@ the head only.
 - **A hash is also not a shared identity.** It is over *your* contract, so equal hashes
   are a coincidence of text and unequal hashes are the normal case; portability is a
   choice of shared contract or shared algebra, never something a digest supplies.
+- **Portability is contract completeness, not objectivity.** A complete declaration set
+  makes the derivation reproducible; it does not make its editorial inputs true. Count
+  the backfilled slots, and do not mistake zero holes for zero judgement.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
