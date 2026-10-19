@@ -130,6 +130,49 @@ So "the weights come from local-time" is true of the plane and not yet of the fa
 table. Letting the derived one vouch for the placeholder one is exactly what `MATH.md`
 forbids.
 
+## The weights are not portable — by construction
+
+The model is **corpus-relative**. Charges, tensor, encoder and *the set of planes* all
+come from the corpus, and `plane_hash` is a hash over **your** contract. So two parties
+do not build the same model; they build two frames.
+
+Concretely, this is not a matter of degree:
+
+- the **dimension is `2 × #compendia`**, so the vectors are not even the same length —
+  yours is 42 (21 compendia), mine is whatever mine has;
+- the **`names` list is yours**, so element *i* of my vector is a different universe from
+  element *i* of yours;
+- the **encoder is yours**, so `sort` orders *your* corpus by *your* judgements
+  (`reality-gradient`, `zero-status` are editorial positions, not measurements).
+
+Which means **everyone has a different ranking**, and that is the design, not a defect:
+`SLA.md` §12 already says selection is *local policy, not shortest path*.
+Non-portability is that principle applied to the model.
+
+| travels | does not travel |
+| --- | --- |
+| the algebra: `c = real + i·(42i distance)`, charges as symmetry labels, the tensor pairing, the holonomy | the weights |
+| the names: universe ids | the ordering |
+| the derivation rule | the vector positions |
+
+So cross-party comparison has to be **by name and value**, never by vector position —
+which is what `plane_universe_id` in the payload is for. Where two corpora do not share
+a name there is nothing to compare, and the relation between the frames is a *rotation*,
+not an equality (*A private plane is a private rotation*).
+
+Portability is therefore a choice, not an upgrade:
+
+1. **Share the contract.** A canonical corpus — the golden cluster as reference — makes
+   the derivation reproducible and the rankings coincide. It also makes everyone adopt
+   somebody's judgements, which is the cost.
+2. **Share the algebra only.** Everyone keeps a local ranking and compares structure and
+   holonomy. That is the BGP answer, and it requires nobody to accept another party's
+   editorial position.
+
+And a hash proves nothing across parties: equal hashes mean the contracts match, and
+unequal hashes mean the contracts differ — not that either is wrong. So *do you?* across
+parties must be asked of `(name, value, structure)`, never of `(hash, rank)`.
+
 ## Verification is a question, not an inspection
 
 The remote never reads your internals. It asks a reproducible question:
@@ -922,6 +965,9 @@ the head only.
 - **A hash gate proves the input did not change, not that the derivation is right.** The
   `plane_hash` catches drift and staleness; it cannot catch a wrong projection, because
   the same derivation applied to the same contract produces the same wrong answer.
+- **A hash is also not a shared identity.** It is over *your* contract, so equal hashes
+  are a coincidence of text and unequal hashes are the normal case; portability is a
+  choice of shared contract or shared algebra, never something a digest supplies.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
