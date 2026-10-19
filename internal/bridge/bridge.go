@@ -28,7 +28,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -145,7 +144,7 @@ func Start(ctx context.Context, cfg Config, opts Options) (*Bridge, error) {
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 
 	if startErr := cmd.Start(); startErr != nil {
 		_ = stdinR.Close()
@@ -275,7 +274,7 @@ func (b *Bridge) Close() error {
 			_ = waitErr
 		case <-time.After(5 * time.Second):
 			if b.cmd.Process != nil {
-				_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGKILL)
+				killProcessGroup(b.cmd)
 			}
 			select {
 			case waitErr := <-b.waitCh:
@@ -298,12 +297,7 @@ func (b *Bridge) shutdownDone() {
 }
 
 func (b *Bridge) killGroup() {
-	if b.cmd == nil || b.cmd.Process == nil {
-		return
-	}
-	// Negative pid signals the whole group created by Setpgid, so wrapper
-	// commands (uvx/npx) cannot leave the real server orphaned.
-	_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGTERM)
+	terminateGroup(b.cmd)
 }
 
 func (b *Bridge) copyStderr(r io.Reader) {

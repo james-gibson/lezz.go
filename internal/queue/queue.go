@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -29,10 +28,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v3"
 )
@@ -169,8 +166,8 @@ func New(cfg Config) (*Queue, error) {
 
 // Start creates the doorbell FIFO, starts the worker, and serves HTTP.
 func (q *Queue) Start(parent context.Context) error {
-	if err := syscall.Mkfifo(q.door, 0o600); err != nil && !errors.Is(err, syscall.EEXIST) {
-		return fmt.Errorf("queue %s: mkfifo: %w", q.cfg.Name, err)
+	if err := makeDoorbell(q.door); err != nil {
+		return fmt.Errorf("queue %s: doorbell: %w", q.cfg.Name, err)
 	}
 	if m, ok := q.store.(*mirrorStore); ok {
 		torn, err := m.Reconcile(parent)
@@ -288,7 +285,7 @@ func (q *Queue) work() {
 	defer q.wg.Done()
 	// The FIFO read end is non-blocking; poll it for wakeups. A ticker is the
 	// safety net (missed doorbell, jobs written by an operator).
-	f, err := os.OpenFile(q.door, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := openDoorbell(q.door)
 	if err != nil {
 		f = nil
 	}
@@ -297,7 +294,6 @@ func (q *Queue) work() {
 	}
 	tick := time.NewTicker(q.cfg.maxWait() / 2)
 	defer tick.Stop()
-	buf := make([]byte, 64)
 	for {
 		q.drain()
 		if f == nil {
@@ -308,27 +304,7 @@ func (q *Queue) work() {
 			}
 			continue
 		}
-		// unix.PollFd.Fd is an int32, while File.Fd is a uintptr. A descriptor
-		// that does not fit would be silently truncated and poll a different
-		// descriptor, so bounds-check it and fall back to the ticker instead.
-		fd := f.Fd()
-		if fd > math.MaxInt32 {
-			select {
-			case <-q.ctx.Done():
-				return
-			case <-tick.C:
-			}
-			continue
-		}
-		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-		n, _ := unix.Poll(fds, 100)
-		if n > 0 {
-			for {
-				if _, readErr := f.Read(buf); readErr != nil {
-					break
-				}
-			}
-		}
+		waitDoorbell(f, 100*time.Millisecond)
 		select {
 		case <-q.ctx.Done():
 			return
@@ -434,12 +410,7 @@ func (q *Queue) oldestAge() time.Duration {
 }
 
 func (q *Queue) ring() {
-	f, err := os.OpenFile(q.door, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return // no reader yet; the ticker will pick it up
-	}
-	_, _ = f.Write([]byte{1})
-	_ = f.Close()
+	ringDoorbell(q.door)
 }
 
 // ---- HTTP -----------------------------------------------------------------
