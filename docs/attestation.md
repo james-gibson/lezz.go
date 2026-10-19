@@ -46,6 +46,55 @@ position is observed by the remote and never asserted by the node, and why the i
 is a signed feature spec: it is the thing the remote can test, and the test is what
 moves the position.
 
+## Where `0i` comes from: null, null exists, 0, `0 < 1`
+
+The public position is derived, not assumed, and the derivation is four steps — each
+adding exactly one distinction:
+
+| step | adds | what breaks without it |
+| --- | --- | --- |
+| **null** | no value at all | — |
+| **null exists** | absence is representable | a missing measurement is indistinguishable from a good one |
+| **0** | zero as a value | a real zero cannot be stated |
+| **`0 < 1`** | the first strict order | a departure cannot be measured, and has no direction |
+
+`0i` — *no departure* — only means something after the fourth step. Before it, zero and
+unknown are the same symbol. The vault states the discipline directly: *absence is not a
+zero value; the "unknown" rung is a compendium with no plane, not a compendium valued at
+zero* (`lore/CONVENTIONS.md`), and local-time's lift returns `null` rather than `0` when
+a condition cannot be computed (`scripts/build-lore-json.js`, `liftTo42i`).
+
+Which makes the public position the **null hypothesis of the measure**: `0i + 42` is the
+only position that costs no evidence. Every other value is a departure that has to be
+measured — which is also why anyone can compute it, and why it is not a secret.
+
+### The weights come from local-time, and the two positions are two build states
+
+`local-time` produces the corpus model — conditions, charges, tensor, encoder — and
+`isotope/plane` consumes it as embedded weights. The two positions are not a metaphor for
+that; they are the two builds:
+
+| build | model | anchor | position |
+| --- | --- | --- | --- |
+| default (no tag) | generic, corpus-free | `42i` hypothesis state, real part 0 | **`42i + 0`** — the joiner's claim |
+| `-tags loreweights` | corpus-derived, from local-time | `42`, proven consensus | **`0i + 42`** — the public position |
+
+`isotope/README.md` says it outright: *"No weights is the `42i`+0 hypothesis state."*
+The corpus weights are committed only as a SOPS blob (`plane/lore-weights.enc.json`) and
+embedded at ship time, so the labels never enter the tree while the model is in the
+binary.
+
+**One precision, or the provenance overclaims.** There are two weight systems and only
+one is derived:
+
+- the **plane** model's weights come from the corpus, via local-time;
+- the **42i distance** weights — `+8`, `+16`, `+32` in `fortytwointegration.go` — are
+  hand-chosen, and `isotope/plane` computes by closed-form arithmetic on indices.
+
+So "the weights come from local-time" is true of the plane and not yet of the failure
+table. Letting the derived one vouch for the placeholder one is exactly what `MATH.md`
+forbids.
+
 ## Verification is a question, not an inspection
 
 The remote never reads your internals. It asks a reproducible question:
@@ -832,6 +881,9 @@ the head only.
   recompute the holonomy if the log carries the sampling instant, the observer, the
   observation, and the commitment. Omit any of them and the audit degrades to trusting
   whoever wrote the log.
+- **A derived weight table does not vouch for a placeholder one.** The plane's weights
+  come from the corpus; the distance weights are hand-chosen. Any claim should say which
+  table it rests on, because the second cannot inherit the first's provenance.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
