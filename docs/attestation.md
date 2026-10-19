@@ -122,6 +122,49 @@ CA; here it terminates in the cluster's verification — registry, mDNS, rung. *
 handshake orients; it does not admit.** Admission is a separate step, and it is the one
 that assigns capability.
 
+## Stabilise, then cluster: the handshake is not a gate
+
+Three flights in three slots is fifteen seconds on the default wheel. In front of the
+connection that is a stall longer than most ACP/MCP clients will wait for one, so
+placement cannot be a precondition of connecting.
+
+Placement is a later step:
+
+```
+connected ──► stabilising ──► handshaking ──► placed
+                   │                │
+                   │                └────────► unplaced (policy) ──► refused
+                   └─ local verbs usable
+```
+
+1. **Connect.** The transport comes up immediately and the session exists. Local verbs
+   work. Nothing about placement is claimed.
+2. **Stabilise.** Observe *K* slots and confirm the peer's slot boundaries agree with
+   ours — a rendezvous on `mod(UTC, 5s)` only holds while skew is well inside the
+   wheel. This is a clock observation, not a trust claim, and it is the part worth an
+   explicit option (`--stabilise K`, small default), because a peer whose skew is
+   unstable will mis-align on every flight after it.
+3. **Cluster.** Run the three flights, one per slot, as specified. Placement is known
+   after flight 2 and final after flight 3.
+
+**The invariant the compromise must not break: unplaced is not a surface.** A
+connection that has not completed flight 2 is not on `base`, not on any configured
+surface, and must not be defaulted to one — `seed.md` is explicit that a folder with
+no key must never auto-create a trusted surface. While unplaced a caller may use local
+verbs and may ask to wait; a cluster call waits for placement or is refused. It is
+never served at an assumed rung.
+
+**Placement is recorded per log entry.** Because a call can now precede flight 2, the
+traffic log carries the placement in force (`placed: false`, or the placement sequence
+number) on each entry. Otherwise an entry written before placement is re-attributed to
+it once the handshake completes, and the plane shows a departure measured under a
+placement that did not yet exist.
+
+What it buys: connect latency is transport latency rather than three slots; placement
+latency is still three slots after stabilisation; and a caller that genuinely needs
+placement up front asks for it (`--wait`, or awaiting `placed`) instead of every caller
+paying the fifteen seconds.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -183,6 +226,9 @@ the head only.
   slots are still three recorded messages; without a per-handshake nonce in flight 1
   and an absolute `joined_at` to check, a recorded exchange can be presented verbatim
   later. The same records that make the handshake ordered make it replayable.
+- **Unplaced is not untrusted, and the errors must not be merged.** "Not placed yet"
+  is a wait state; "refused" is a verdict. Mapping both onto one error teaches callers
+  to retry a trust failure as if it were latency.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
@@ -236,6 +282,10 @@ claim time, and the attestation records that a binding exists.
    plus the head chain.
 3. **One keypair per project, or per cluster?** One is simpler; per-cluster isolates
    compromise and multiplies rotation.
+4. **Stabilisation as slots or as a skew bound?** `--stabilise K` counts slots, which
+   is easy to reason about but assumes the peer's clock drifts smoothly. A bound on
+   observed skew (milliseconds) is the honest quantity, and much harder to specify
+   against a five-second wheel.
 
 ## See also
 
