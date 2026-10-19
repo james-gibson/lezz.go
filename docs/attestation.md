@@ -428,6 +428,55 @@ Two corollaries worth keeping:
   the compromised state — the mirror, the surface, the isotope records. That is a
   scoped withdrawal, in the BGP sense (`The fabric`), not a global rotation.
 
+## The motion sensor: a local chain is not enough
+
+The tamper-evident store is the lock and the door log. A burglar who owns the house can
+also own the door log — rewrite it coherently, recompute the chain, leave no trace
+inside. **Local evidence is necessary and not sufficient**, because the intruder has
+unlimited time with the only copy.
+
+What survives a careful cleanup is that they did not have a chance to stop **every**
+form of evidence. The neighbour's mirror, the client's receipt, the peer's
+announcement — none of those are inside the house:
+
+| witness | holds | survives |
+| --- | --- | --- |
+| neighbour's mirror (B of A) | A's traffic log and isotope records | A rewriting its own store |
+| the client's receipt | the attestation and the seq it was issued at | the cluster rewriting its own log |
+| a peer's announcement | the route and its path | the advertiser withdrawing quietly |
+| another cluster | its own attestation copy and plane | a compromise confined to one cluster |
+
+None of this is new machinery. Every object in this document already has a
+counterparty holding a copy: the mirror (`RECONCILE.md`), the receipt
+(*Who pays the fifteen seconds*), the announcement (*The fabric*), the per-cluster plane
+(*Why there is one plane per cluster*). The motion sensor is the observation that each of
+them is **also evidence** — and the unit of evidence is the pair, not the record.
+
+**Disagreement between two internally consistent records is the signal.** `MATH.md`
+warns about a figure that is "internally consistent, externally false"; the witness
+turns that into the detectable case — internally consistent, *externally contradicted*.
+The rewrite is invisible from inside and obvious from outside, which is the same
+inversion as *no node reports on itself*.
+
+Four conditions, or the sensor is decoration:
+
+- **Independence is a failure domain, not a count.** Two processes on one host share the
+  host's compromise; that is the same reason stacking spends the isolation property
+  (*The fabric*). Strength increases process → host → cluster → trust domain.
+- **A sensor that nobody reads did not fire.** Someone has to compare: C verifies B, the
+  client compares the head on return, the peer checks the path. Verification cadence is
+  part of the mechanism, not an operational afterthought.
+- **A trigger is not a verdict.** Motion sensors fire for the cat: a restart, a role
+  swap, a clock divergence. Disagreement opens verification — suppressed and re-checked
+  rather than banned, exactly as dampening does.
+- **Some things cannot be witnessed.** A decision that exists in one place only — a
+  private key's use, an unlogged local judgement — has no counterparty, so no trust
+  claim should rest on it.
+
+And it sharpens the earlier corollary: the neighbours who must re-key after a break-in
+are also the witnesses who make the break-in visible at all. The cost of a compromise is
+paid in the same graph that would detect it.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -505,6 +554,9 @@ the head only.
 - **A store that can be rewritten without evidence turns a burglary into a vacation.**
   Durability alone proves nothing about the interval; the sequence and the hash chain
   are what make absence distinguishable from intrusion.
+- **A witness inside the same failure domain is a mirror, not a witness.** Two processes
+  on one host, or two clusters on one key, share the compromise and corroborate
+  nothing; independence is what the evidence is made of.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
