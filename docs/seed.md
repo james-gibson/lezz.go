@@ -4,6 +4,9 @@ A project-local identity and placement file. `lezz see` reads it, recomputes
 the 42i start, resolves the external auth reference, and shows the cluster
 surface. It does **not** join or create anything yet.
 
+A project may be placed in more than one cluster at once; what the cluster issues back,
+and what it may then write into the project, is [attestation.md](attestation.md).
+
 ## The 42i start
 
 `isotope.NewAgentState(id)` starts at **42 + 0i**, rung 0, direction
