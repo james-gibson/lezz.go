@@ -84,10 +84,45 @@ The corpus weights are committed only as a SOPS blob (`plane/lore-weights.enc.js
 embedded at ship time, so the labels never enter the tree while the model is in the
 binary.
 
+### The derivation is implemented, and it is gated on the contract
+
+This is not aspirational: the vault's indexer does it
+(`scripts/qdrant/index_kb.py`, §*Plane space* in its README). For each compendium it
+reads the `plane:` frontmatter as a **contract**, and the contract wins:
+
+1. charges from the declared `plane.charges` — currently 15×`+1` and 6×`−1`, a real
+   two-sector graph rather than an assumed one;
+2. `plane gen --charges <declared> --anchor 42` materialises the skeleton;
+3. each compendium's value is `c = real tier + i·(42i distance)`, with the real tier from
+   `reality-gradient` (0..1 → 0..42, so 1.0 is consensus) and the imaginary part from
+   `zero-status` (`established` → 0, otherwise backfilled);
+4. tensor edges come from `plane.tensor`, with unset weights backfilled by the cosine of
+   the two embeddings — so the `out == 0` blocks carry the real↔fiction coupling.
+
+The result is cached as `.plane-weights.json` and gated by a `plane_hash` **over the
+declared contract**, folded with the doc body only where a backfilled slot reads it. Two
+consequences worth stealing:
+
+- **a contract edit re-derives; a prose edit does not churn.** That is the same
+  discipline as this document's content-free attestation: bind to the declaration, not
+  to the bytes.
+- **the same file gates three downstream syncs by signature** — `isotope_weights`,
+  `local_time_universes`, `docs_sites` in `.plane-set-state.json`. An unchanged hash
+  skips the target. That is *"do you?"* asked of artefacts instead of sessions: same
+  contract, same hash, same answer.
+
+Two honest limits of the implementation: the `plane` vector does **not** affect MCP
+query results today (fastembed only) — it exists for clients that know the model; and
+`GenerateModel` has no contract parser behind it (isotope#7), so the shipped binary needs
+the SOPS blob rather than reading frontmatter.
+
+Also, a coincidence not to build on: the plane *dimension* is `2 × #compendia`, which is
+42 today because there are 21 compendia. That 42 is corpus size, not the anchor.
+
 **One precision, or the provenance overclaims.** There are two weight systems and only
 one is derived:
 
-- the **plane** model's weights come from the corpus, via local-time;
+- the **plane** model's weights come from the corpus contract, through the indexer above;
 - the **42i distance** weights — `+8`, `+16`, `+32` in `fortytwointegration.go` — are
   hand-chosen, and `isotope/plane` computes by closed-form arithmetic on indices.
 
@@ -884,6 +919,9 @@ the head only.
 - **A derived weight table does not vouch for a placeholder one.** The plane's weights
   come from the corpus; the distance weights are hand-chosen. Any claim should say which
   table it rests on, because the second cannot inherit the first's provenance.
+- **A hash gate proves the input did not change, not that the derivation is right.** The
+  `plane_hash` catches drift and staleness; it cannot catch a wrong projection, because
+  the same derivation applied to the same contract produces the same wrong answer.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
