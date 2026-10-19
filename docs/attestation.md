@@ -38,6 +38,9 @@ attestation = sign_cluster( cluster, project_pubkey, surface, anchor, joined_at 
 - The private key lives outside the file, in the keychain; `seed.json` carries a
   reference (`auth.ref`), never a value. That is the existing rule, applied to the
   identity itself.
+- `joined_at` is absolute UTC, not a tick slot. A receipt stamped with `mod(UTC, 5s)`
+  would recur every five seconds and could be presented as a fresh join — see *The
+  tick* below.
 - Possession of the key is what makes the directory "the same project" after any
   amount of mutation. Nothing else in the file can do that job.
 
@@ -50,15 +53,43 @@ attestation. An attestation read back as a current rung is a stale credential.
 Placement multiplies; the seed does not.
 
 `42 + 0i` is the same baseline in every cluster — anyone can compute it. The
-trajectory away from it is not shared, because the measure is taken **against the
-cluster's own clock** (`lab-safety/lab/PLANE.md`, §*Axes* and §*Partitions*: a
-partitioned cluster that retained internal accuracy remains accurate on
-reconnection). A project in three clusters has three readings, not one sum.
+trajectory away from it is not shared: the **tick is shared by default** (below), but
+the measurement chain is not. `PLANE.md` (§*Axes*, §*Partitions*) makes the accuracy
+claim against the cluster's own clock, so a partitioned cluster that retained internal
+accuracy remains accurate on reconnection. A project in three clusters has three
+readings, not one sum.
 
 The distance is a formula over observable inputs, **not stored state**
-(`PLANE.md`, §*The computation*). Attributing one number to a project across
-clusters would require a shared clock and a single formula; neither exists. Do not
-add distances across clusters.
+(`PLANE.md`, §*The computation*). Two clusters on the same tick can be *compared* at
+the same slot; they cannot be *added*, because that would assume one formula and one
+observer chain. Comparison and addition are different operations.
+
+## The tick: a shared phase, not a shared counter
+
+The linear axis has a default source: `mod(UTC, 5s)`. It is public and computable by
+anyone, so two clusters that share nothing — no federation, no registry, no key
+exchange — still agree on when the current slot is. That is what lets unrelated
+clusters speak to each other: they rendezvous on the same five-second slot without
+first agreeing on a counter or an authority.
+
+Two things it does and does not buy:
+
+- **Alignment, yes.** A position sampled in cluster A at slot *k* and one sampled in
+  cluster B at slot *k* are readings of the same phase, and may be compared.
+- **Order, no.** `mod` discards the cycle, so slot *k* recurs every five seconds. An
+  entry carrying only a slot can be replayed as "this tick" indefinitely — the stale
+  credential's failure mode, in time. Freshness needs the absolute timestamp (or a
+  cycle count) beside the slot, and the log carries both: absolute time orders, the
+  slot compares.
+
+Resolution follows from the wheel: two events inside one five-second slot are the same
+tick and cannot be ordered by it. An entry that needs sub-slot ordering carries the
+absolute time; the tick is the coordinate, not the clock.
+
+A cluster may run its own tick instead — the federation's heartbeat and announce
+intervals are the internal variant (`PLANE.md`, §*Axes*). A plane on a private tick is
+comparable only to itself: that is the partition case, and it remains accurate while
+partitioned.
 
 ## The two logs
 
@@ -91,9 +122,9 @@ Rules the log must satisfy, or it inherits figures already known to be false:
 
 ## What is public
 
-The accounting is public because the **anchor and the formula** are public: anyone can
-compute `42 + 0i` and re-run the projection. The **inputs** are not — a traffic log is
-who-called-what.
+The accounting is public because the **anchor, the formula, and the tick** are public:
+anyone can compute `42 + 0i`, re-run the projection, and read the current five-second
+slot. The **inputs** are not — a traffic log is who-called-what.
 
 So publish the derived position plus a hash of the log head. A verifier can then check
 that history was not rewritten without reading the traffic. That is the same split as
@@ -114,6 +145,9 @@ the head only.
   produced it says, and must not be carried into another file's formula.
 - **A cursor is not a receipt.** Applying cluster *c*'s log attests nothing; only the
   attestation does.
+- **A slot is not a timestamp.** `mod(UTC, 5s)` recurs, so anything stamped with the
+  slot alone can be presented as current. Order on the absolute time, compare on the
+  slot, and never let a slot decide freshness.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
