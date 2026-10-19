@@ -207,6 +207,63 @@ placed peer answers on its behalf, and the traffic log records `on_behalf_of`. W
 that, the visitor's departures are attributed to the proxy's placement and the
 accounting is false — the proxy's rung would move for somebody else's calls.
 
+## A, B, C, and the doorbell
+
+The three flights are not three messages to one node. They are three messages to three
+roles, and that separation is why the latency cannot collapse:
+
+| flight | node | verification role | admission layer |
+| --- | --- | --- | --- |
+| 1 | **A** | ingress | presence — the session |
+| 2 | **B** | verifies A | surface — the dynamic tool array |
+| 3 | **C** | monitors B | authority — the credentials |
+
+Each node is verified by the next, so no node reports on itself
+(`lab-safety/lab/RECONCILE.md`, §*Topology* and §*Admission layers*). One round trip to
+one node would put presence, surface, and authority in a single process, which is the
+thing the triad exists to avoid.
+
+**And the FIFO is a doorbell, not the queue.** The lab already has this pattern
+(`docs/queue.md`): one byte per enqueue wakes the worker, the spool of `jobs/*.json`
+is the order of record, and a missed doorbell is harmless because the spool is the
+source of truth. The tick is the same shape at a coarser resolution:
+
+> **The tick wakes. The log orders.** A dropped slot costs latency, never state.
+
+That is the resolution of the earlier ordering problem. `mod(UTC, 5s)` is a doorbell —
+it says *now*, not *which came first* — and the absolute timestamps in the log are the
+spool. A slot may be missed; the log is what survives it.
+
+### Prewarm
+
+A client with a real reason to be there passes A and B ahead of time, so its first
+real call finds presence and surface warm and only C's authority check remains. Cold,
+that same call pays queue depth plus three slots.
+
+**Prewarm warms presence and surface. It never warms authority.** Authority is
+per-use; warming it would convert a credential check into a standing grant, which is
+exactly what the attestation was designed not to be. So the saving is bounded — two of
+the three slots — and trust-neutral: no rung moves, no check is skipped.
+
+Two legitimate ways to be warm:
+
+- **resumption** — hold an isotope receipt; the domain is oriented before the first
+  message (*Who pays the fifteen seconds*), and its age is counted;
+- **registration** — reserve through the FIFO with the project key before the call is
+  needed. A reservation is scheduling, not trust: it buys position in the queue, not
+  permission.
+
+**The cost is conserved.** A cold client pays in slots; a warm one pays in upkeep,
+because a warmed session that stops refreshing becomes a stale credential — and a
+stale credential is a departure the plane will count. Nobody gets the fast path free;
+somebody just chooses whether to spend it in latency or in attention.
+
+**The chain is not Byzantine-tolerant at three nodes.** `F = ⌊(N−1)/3⌋` gives `F = 0`
+at `N = 3` (`MATH.md`), so A/B/C is a *verification* chain — each node checks a
+different property, and a fault falls to a neighbour — not a consensus set. Claiming
+fault tolerance for the golden triangle would be claiming a figure the arithmetic does
+not support; Byzantine tolerance starts at four nodes.
+
 ## The two logs
 
 Per cluster, per project, the plane is derived from two append-only streams:
@@ -275,6 +332,9 @@ the head only.
   it speaks, but the domain it claims still has to be revalidated against the cluster's
   head, and the session has to remain revocable. A resumed session that cannot be
   revoked is a standing grant, which is what the attestation was designed not to be.
+- **A reservation that never completes blocks the doorbell.** A prewarmed slot held
+  indefinitely is head-of-line blocking for everyone behind it, so reservations expire
+  and return to the back of the queue rather than being held silently.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
