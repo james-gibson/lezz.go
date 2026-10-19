@@ -195,12 +195,31 @@ group or KDF, because a bare real number carries no security.)
 4. **Not reusable across sessions.** Resumption spends a *credential*, not a key: a
    pre-baked receipt re-authorises the session but must still re-key it.
 
-**And there is a tension worth naming, not hiding.** The rotation is what must stay
-private, and the holonomy — the loop product — is what catches a forgery. Publishing the
-holonomy as a value discloses the composition of the very rotations it checks. So the
-loop check has to be a comparison of commitments, or an equality verdict computed inside
-the quorum, rather than a published angle. That is unresolved, and it belongs in *Open
-decisions*.
+### Two rotations, and only one of them is a secret
+
+The tension above dissolves once the two quantities stop sharing a word.
+
+| rotation | derived from | secrecy |
+| --- | --- | --- |
+| the **observed phase** — the trajectory's argument | the public wheel plus the logged observations | public: recomputable by anyone, later |
+| the **session rotation** — the key exchange | fresh randomness | private, and destroyed after use |
+
+The observed phase is public *because the wheel is*. `mod(UTC, 5s)` is a published
+yardstick, so a future observer holding the log can reconstruct when each sample was
+taken, multiply the loop, and see whether it closes. The holonomy is therefore a
+**public check** — which is the point of a public tick, and the reason the accounting is
+recomputable rather than merely published.
+
+What must never appear in the log is the session rotation itself. The rule that keeps the
+two apart:
+
+> **Log observations, commitments, and verdicts. Never seeds.**
+
+And the trap that destroys both properties at once: **never derive the session rotation
+from the tick, or from the observed phase.** The wheel is a sampling reference, not a key
+source. A rotation derived from a public grid is public by construction, and it fails
+condition 1 without failing any test — the sessions still work, they are simply no
+longer forward-secret.
 
 ## The tick: a shared phase, not a shared counter
 
@@ -747,6 +766,11 @@ that history was not rewritten without reading the traffic. That is the same spl
 `SPLASH.md` §*Two invariants*: the traffic log and the isotope records are the audit
 surface, not the advertisement.
 
+Because the wheel is public, the loop is too: an observer with the log and the clock can
+recompute the holonomy and check that it closes (*Two rotations*). That is the strongest
+form of the claim — the accounting is not merely published, it is **re-derivable by
+someone who was not there**.
+
 Publishing the position does disclose cadence — a `seq` stream says how active a
 project is, and when. If that matters on a given surface, publish the attestation and
 the head only.
@@ -804,6 +828,10 @@ the head only.
 - **An angle is not a key.** "A rotation somewhere on the circle" has no entropy
   budget; forward secrecy starts when the rotation is drawn from a key space, with a
   stated size, and ends the moment it is retained or derived from the attestation.
+- **Auditability is a logging requirement.** The public wheel only lets a stranger
+  recompute the holonomy if the log carries the sampling instant, the observer, the
+  observation, and the commitment. Omit any of them and the audit degrades to trusting
+  whoever wrote the log.
 - **Two writers, one tree.** If two clusters write into the same project, they claim
   the same paths. Give each a disjoint mount (`.lezz/clusters/<cluster>/`) or admit
   one writer at a time; a cursor cannot disambiguate two writers.
@@ -868,11 +896,11 @@ claim time, and the attestation records that a binding exists.
    validity window is simple and refuses a returning client after it lapses; treating
    age as distance means a stale receipt still works but starts the session already
    departed. The second is more consistent with the measure and harder to explain.
-6. **How is the holonomy checked without publishing it?** The loop product is the
-   forgery check, and the rotations it multiplies are the secrets. Either the check is
-   over commitments (an equality verdict, no angle revealed), or it runs only inside
-   the quorum and the public sees a boolean. The first is stronger and needs a
-   commitment scheme; the second leaks nothing but trusts the quorum's report.
+6. **What is the commitment format for the public loop?** The holonomy is publicly
+   recomputable from the wheel and the log (*Two rotations*), so the check itself is not
+   the secret. What remains open is the shape of the commitments the log carries, so a
+   verifier can confirm the observations are the ones the session used — without the log
+   ever holding a seed.
 
 ## See also
 
