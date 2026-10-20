@@ -183,11 +183,24 @@ public, versioned place, so the numbers are *derived from declarations* rather t
 to text.
 
 And it gives the criterion a number instead of an argument: **count the backfilled
-slots.** Today the corpus declares tensor edges but leaves every `w` unset (its README
-says so — "`w: unset` — true for every declared edge in the current corpus"), so the
-coupling is 100% backfilled. That is exactly why the ranking does not travel yet. The
-count belongs in `.plane-set-state.json` beside `plane_hash`, because it is the
-portability score.
+slots.** Measured on 2026-10-19, over the 21 plane blocks in the corpus (aggregate counts
+only):
+
+| slot | declared | backfilled |
+| --- | --- | --- |
+| charges | 21 | 0 |
+| encoder real tier (from `reality-gradient`) | 21 | 0 |
+| encoder imaginary — the 42i distance, from `zero-status` | 7 | **14** |
+| tensor weights | 0 | **17** |
+
+So the model is not "mostly declared". The real tier is complete, the tensor is entirely
+backfilled (every declared edge is `w: unset`), and **two thirds of the departure axis —
+the quantity the measure reads — is backfilled.** The portability gap is concentrated in
+the measure itself, which is the worst place for it.
+
+That count belongs in `.plane-set-state.json` beside `plane_hash`, because it is the
+portability score: a target whose score drops is a target whose ranking just became
+local.
 
 If the contract is completed, the first option below stops being "adopt somebody's
 corpus" and becomes the much weaker "adopt a published declaration set" — which anyone
