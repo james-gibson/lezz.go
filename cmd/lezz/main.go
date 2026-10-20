@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -148,6 +149,18 @@ func main() {
 	case "version":
 		cmdVersion()
 
+	case "-h", "-help", "--h", "--help", "help":
+		// A help request is not an error and must not have a side effect.
+		// `lezz help <command>` describes one command; anything else prints
+		// the full list.
+		if rest := os.Args[2:]; len(rest) > 0 {
+			if _, ok := lookupCommand(strings.Join(rest, " ")); ok {
+				printCommandUsage(os.Stdout, strings.Join(rest, " "), nil)
+				return
+			}
+		}
+		usage()
+
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		usage()
@@ -158,6 +171,15 @@ func main() {
 // lezz demo
 // Launches a self-contained demo cluster: 2 ocd-smoke-alarm instances + adhd headless.
 func cmdDemo(ctx context.Context) {
+	if helpOnly("demo", os.Args[2:]) {
+		return
+	}
+	// demo takes no arguments. Refusing them keeps a mistyped flag from
+	// launching a second cluster — the failure mode that `demo --help` had.
+	if err := noArguments("demo", os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "demo:", err)
+		os.Exit(2)
+	}
 	if err := demo.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)
 		os.Exit(1)
@@ -170,6 +192,13 @@ func cmdDemo(ctx context.Context) {
 // awaiting — targets/config arrive via the server's auto-refresh and remote
 // update paths instead of a hardcoded config.
 func cmdAuto(ctx context.Context) {
+	if helpOnly("auto", os.Args[2:]) {
+		return
+	}
+	if err := noArguments("auto", os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "auto:", err)
+		os.Exit(2)
+	}
 	if err := demo.RunAuto(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "auto:", err)
 		os.Exit(1)
@@ -180,6 +209,9 @@ func cmdAuto(ctx context.Context) {
 // Creates seed.json: a stable project id, the surface to join, and an external
 // auth reference. It never writes a secret and never touches a GitHub identity.
 func cmdSeed() {
+	if helpOnly("seed", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 || os.Args[2] != "init" {
 		fmt.Fprintln(os.Stderr, "usage: lezz seed init [--surface base] [--auth-ref env:LEZZ_CLUSTER_KEY] [--name NAME] [--force]")
 		os.Exit(1)
@@ -189,8 +221,8 @@ func cmdSeed() {
 	authRef := fs.String("auth-ref", "env:LEZZ_CLUSTER_KEY", "external auth reference (env:NAME, file:/path, keychain:NAME)")
 	name := fs.String("name", "", "project name (default: current folder)")
 	force := fs.Bool("force", false, "overwrite an existing seed.json")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	path := "seed.json"
 	if *name == "" {
@@ -219,6 +251,9 @@ func cmdSeed() {
 
 // lezz debug keygen|lease|fetch-keys
 func cmdDebug(ctx context.Context) {
+	if helpOnly("debug", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz debug keygen|lease|fetch-keys")
 		os.Exit(1)
@@ -227,8 +262,8 @@ func cmdDebug(ctx context.Context) {
 	case "keygen":
 		fs := flag.NewFlagSet("debug keygen", flag.ContinueOnError)
 		dir := fs.String("dir", debuglease.DefaultDir(), "key directory")
-		if err := fs.Parse(os.Args[3:]); err != nil {
-			os.Exit(1)
+		if !parseOrHelp(fs, os.Args[3:]) {
+			return
 		}
 		key, allowed, err := debuglease.EnsureDefaultKey(*dir)
 		if err != nil {
@@ -244,8 +279,8 @@ func cmdDebug(ctx context.Context) {
 		key := fs.String("key", "", "signing key (default: local debug key)")
 		signerID := fs.String("signer", "local", "allowed_signers identity")
 		out := fs.String("out", "lease.json", "lease output path")
-		if err := fs.Parse(os.Args[3:]); err != nil {
-			os.Exit(1)
+		if !parseOrHelp(fs, os.Args[3:]) {
+			return
 		}
 		if *seedID == "" {
 			f, err := seed.Load("seed.json")
@@ -277,8 +312,8 @@ func cmdDebug(ctx context.Context) {
 		fs := flag.NewFlagSet("debug fetch-keys", flag.ContinueOnError)
 		user := fs.String("user", "", "GitHub username")
 		refresh := fs.Bool("refresh", false, "re-fetch and overwrite the pinned file")
-		if err := fs.Parse(os.Args[3:]); err != nil {
-			os.Exit(1)
+		if !parseOrHelp(fs, os.Args[3:]) {
+			return
 		}
 		if *user == "" {
 			fmt.Fprintln(os.Stderr, "debug fetch-keys: --user is required")
@@ -302,8 +337,8 @@ func cmdDebug(ctx context.Context) {
 func cmdSee(ctx context.Context) {
 	fs := flag.NewFlagSet("see", flag.ContinueOnError)
 	path := fs.String("file", "seed.json", "path to seed.json")
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[2:]) {
+		return
 	}
 	f, err := seed.Load(*path)
 	if err != nil {
@@ -356,8 +391,8 @@ func cmdAnon(ctx context.Context) {
 	signer := fs.String("signer", "", "lease trust source: github:USER or default")
 	identity := fs.String("identity", "", "allowed_signers identity (default: github user or local)")
 	seedID := fs.String("seed", "", "expected seed id (default: seed.json in the current folder)")
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[2:]) {
+		return
 	}
 
 	// Resolve the trust root only when a lease is supplied: the debug flag alone
@@ -446,8 +481,8 @@ func cmdMCP(ctx context.Context) {
 	cacheURL := fs.String("cache-url", os.Getenv("LEZZ_CACHE_URL"), "PR cache base URL (default: LEZZ_CACHE_URL)")
 	listen := fs.String("listen", "127.0.0.1:0", "MCP listen address")
 	name := fs.String("name", "pr", "wrapper name")
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[2:]) {
+		return
 	}
 	if *cacheURL == "" {
 		fmt.Fprintln(os.Stderr, "mcp: --cache-url (or LEZZ_CACHE_URL) is required")
@@ -481,8 +516,8 @@ func cmdCache(ctx context.Context) {
 	}
 	fs := flag.NewFlagSet("cache", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to a cache YAML (default: embedded github definition)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, args) {
+		return
 	}
 
 	var (
@@ -526,8 +561,8 @@ func cmdQueue(ctx context.Context) {
 	}
 	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to a queue YAML (default: embedded github definition)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, args) {
+		return
 	}
 
 	var (
@@ -564,6 +599,9 @@ func cmdQueue(ctx context.Context) {
 // lezz run <tool> [args...]
 // Replaces the lezz process with the tool — lezz does not appear in the process tree.
 func cmdRun() {
+	if helpOnly("run", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz run <tool> [args...]")
 		fmt.Fprintf(os.Stderr, "managed tools: %s\n", strings.Join(tools.Names(), ", "))
@@ -580,6 +618,9 @@ func cmdRun() {
 
 // lezz install <tool>
 func cmdInstall(ctx context.Context) {
+	if helpOnly("install", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz install <tool>")
 		fmt.Fprintf(os.Stderr, "managed tools: %s\n", strings.Join(tools.Names(), ", "))
@@ -610,6 +651,9 @@ func cmdInstall(ctx context.Context) {
 
 // lezz update
 func cmdUpdate(ctx context.Context) {
+	if helpOnly("update", os.Args[2:]) {
+		return
+	}
 	fmt.Printf("lezz %s — checking for updates...\n", version())
 
 	latest, hasUpdate, err := selfupdate.Check(ctx, version())
@@ -636,6 +680,9 @@ func cmdUpdate(ctx context.Context) {
 // Spawns the tool as a child process and waits for it to exit.
 // Unlike "lezz run", lezz stays alive as the parent (useful for scripting clusters).
 func cmdStart() {
+	if helpOnly("start", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz start <tool> [args...]")
 		fmt.Fprintf(os.Stderr, "managed tools: %s\n", strings.Join(tools.Names(), ", "))
@@ -657,11 +704,18 @@ func cmdStart() {
 
 // lezz service install|remove|list|purge [tool] [profile]
 func cmdService() {
+	if helpOnly("service", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove|list|purge [tool] [profile]")
 		os.Exit(1)
 	}
 	action := os.Args[2]
+	if helpRequested(os.Args[3:]) {
+		printCommandUsage(os.Stdout, "service "+action, nil)
+		return
+	}
 
 	switch action {
 	case "list":
@@ -738,6 +792,9 @@ func cmdService() {
 //
 // This is a full reset — re-run `lezz install <tool>` to reinstall.
 func cmdPurge(ctx context.Context) {
+	if helpOnly("purge", os.Args[2:]) {
+		return
+	}
 	// 1. Stop + remove launchd services.
 	services, err := service.List()
 	if err != nil {
@@ -833,6 +890,9 @@ func cmdServicePurge() {
 // `agent_servers` member is touched; the rest of the file, including comments,
 // is left byte-for-byte alone.
 func cmdAgent(ctx context.Context) {
+	if helpOnly("agent", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz agent setup|remove|show|build [editor] [flags]")
 		os.Exit(1)
@@ -850,7 +910,7 @@ func cmdAgent(ctx context.Context) {
 		rest = rest[1:]
 	}
 
-	fs := flag.NewFlagSet("agent "+action, flag.ExitOnError)
+	fs := flag.NewFlagSet("agent "+action, flag.ContinueOnError)
 	name := fs.String("name", "workspace", "the agent_servers key")
 	settings := fs.String("settings", "", "override the settings file")
 	dryRun := fs.Bool("dry-run", false, "show the change without writing it")
@@ -861,7 +921,9 @@ func cmdAgent(ctx context.Context) {
 	spec := fs.String("spec", "", "seed the session from this Gherkin spec")
 	src := fs.String("src", "", "workspace-agent source (lab-safety checkout or agent module)")
 	noBuild := fs.Bool("no-build", false, "do not fetch/build workspace-agent when it is missing")
-	_ = fs.Parse(rest)
+	if !parseOrHelp(fs, rest) {
+		return
+	}
 
 	if editor != "zed" {
 		fmt.Fprintf(os.Stderr, "unknown editor %q (supported: zed)\n", editor)
@@ -896,8 +958,8 @@ func cmdAgentBuild(ctx context.Context) {
 	src := fs.String("src", "", "lab-safety checkout or agent module (default: ~/.lezz/src/lab-safety)")
 	out := fs.String("out", "", "output path (default: ~/.lezz/bin/workspace-agent)")
 	noFetch := fs.Bool("no-fetch", false, "use the existing source checkout without git fetch")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	path, err := workspaceagent.Build(ctx, workspaceagent.Options{
 		Source:  expandHome(*src),
@@ -1046,13 +1108,16 @@ func resolveAgentCommand(explicit string) (string, error) {
 }
 
 func resolveExecutable(v string) (string, error) {
-	if st, err := os.Stat(v); err == nil && !st.IsDir() {
+	if st, err := os.Stat(v); err == nil && !st.IsDir() { //nolint:gosec // --command is the user asking for this exact path
 		return v, nil
 	}
 	return exec.LookPath(v)
 }
 
 func cmdVersion() {
+	if helpOnly("version", os.Args[2:]) {
+		return
+	}
 	fmt.Println("lezz", version())
 	fmt.Println()
 
@@ -1147,6 +1212,9 @@ func isOnPath(dir string) bool {
 // GitHub device flow: no client secret, client ID embedded at build time, token
 // stored in the platform credential store (Keychain on macOS).
 func cmdAuth(ctx context.Context) {
+	if helpOnly("auth", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz auth github|status|logout")
 		os.Exit(1)
@@ -1170,8 +1238,8 @@ func cmdAuthGitHub(ctx context.Context) {
 	scopes := fs.String("scopes", githubauth.DefaultScopes, "OAuth scopes")
 	storeKind := fs.String("store", "auto", "credential store: auto, keychain, or file")
 	noBrowser := fs.Bool("no-browser", false, "print the verification URL instead of opening a browser")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 
 	id := githubClientID(*clientID)
@@ -1241,8 +1309,8 @@ func cmdAuthStatus(ctx context.Context) {
 	fs := flag.NewFlagSet("auth status", flag.ContinueOnError)
 	storeKind := fs.String("store", "auto", "credential store: auto, keychain, or file")
 	asJSON := fs.Bool("json", false, "print JSON")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 
 	rec, err := githubauth.LoadRecord()
@@ -1315,8 +1383,8 @@ func cmdAuthStatus(ctx context.Context) {
 func cmdAuthLogout() {
 	fs := flag.NewFlagSet("auth logout", flag.ContinueOnError)
 	storeKind := fs.String("store", "auto", "credential store: auto, keychain, or file")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	rec, _ := githubauth.LoadRecord()
 	store, err := credential.New(storeKindFor(*storeKind, rec))
@@ -1404,6 +1472,9 @@ func normalizeArgs(argv []string) []string {
 // Wraps the lezz binary in a macOS .app so macOS has a stable identity for TCC
 // permissions and passkeys. The app defaults to the base cluster.
 func cmdApp() {
+	if helpOnly("app", os.Args[2:]) {
+		return
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: lezz app install|open|info|uninstall")
 		os.Exit(1)
@@ -1434,8 +1505,8 @@ func cmdAppInstall() {
 	dock := fs.Bool("dock", false, "show a Dock icon instead of running as a background app")
 	force := fs.Bool("force", false, "replace an existing bundle")
 	bin := fs.String("bin", "", "binary to wrap (default: this lezz)")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 
 	info, err := appbundle.Install(appbundle.Config{
@@ -1482,8 +1553,8 @@ func cmdAppOpen() {
 	app := fs.String("app", "", "app bundle path (default ~/Applications/Lezz.app)")
 	wait := fs.Bool("wait", false, "wait for the app to exit")
 	newInstance := fs.Bool("new", false, "start a new instance")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	path := expandHome(*app)
 	if path == "" {
@@ -1509,8 +1580,8 @@ func cmdAppOpen() {
 func cmdAppInfo() {
 	fs := flag.NewFlagSet("app info", flag.ContinueOnError)
 	app := fs.String("app", "", "app bundle path (default ~/Applications/Lezz.app)")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	path := expandHome(*app)
 	if path == "" {
@@ -1559,8 +1630,8 @@ func cmdAppUninstall() {
 	fs := flag.NewFlagSet("app uninstall", flag.ContinueOnError)
 	app := fs.String("app", "", "app bundle path (default ~/Applications/Lezz.app)")
 	force := fs.Bool("force", false, "stop a running app and remove it")
-	if err := fs.Parse(os.Args[3:]); err != nil {
-		os.Exit(1)
+	if !parseOrHelp(fs, os.Args[3:]) {
+		return
 	}
 	path := expandHome(*app)
 	if path == "" {
@@ -1599,42 +1670,205 @@ func joinPIDs(pids []int) string {
 	return strings.Join(parts, ", ")
 }
 
+// --- help ---
+//
+// A help request prints usage and does nothing else. Every command asks these
+// helpers before it parses its own flags or starts any work, so `lezz demo
+// --help` cannot launch a cluster.
+
+// helpRequested reports whether args ask for usage. It stops at the first
+// argument that is not a flag, which is also where the flag package stops
+// parsing: lezz's own options come first, so `lezz run adhd -h` still hands
+// -h to adhd.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "-" || a == "--" || !strings.HasPrefix(a, "-") {
+			return false
+		}
+		switch strings.TrimLeft(a, "-") {
+		case "h", "help":
+			return true
+		}
+	}
+	return false
+}
+
+// parseOrHelp parses a command's flags, or prints the command's usage when
+// args ask for it. It returns false when usage was printed, so the caller
+// returns before doing any work.
+func parseOrHelp(fs *flag.FlagSet, args []string) bool {
+	// The flag package's own usage is a bare flag list; this file prints the
+	// command's block instead. Silence it so a help flag that reaches Parse
+	// cannot print both.
+	fs.Usage = func() {}
+	if helpRequested(args) {
+		printCommandUsage(os.Stdout, fs.Name(), fs)
+		return false
+	}
+	if err := fs.Parse(args); err != nil {
+		// A help flag can still reach Parse when it follows a value, e.g.
+		// `lezz queue --config /p --help`.
+		if errors.Is(err, flag.ErrHelp) {
+			printCommandUsage(os.Stdout, fs.Name(), fs)
+			return false
+		}
+		os.Exit(1)
+	}
+	return true
+}
+
+// helpOnly is parseOrHelp for commands that take no flags of their own.
+func helpOnly(path string, args []string) bool {
+	if !helpRequested(args) {
+		return false
+	}
+	printCommandUsage(os.Stdout, path, nil)
+	return true
+}
+
+// noArguments rejects positional arguments for a command that accepts none.
+// It keeps a mistyped flag from being silently ignored.
+func noArguments(path string, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected argument %q; lezz %s takes no arguments (try lezz %s --help)", args[0], path, path)
+}
+
+// commandDoc is one row of the command table. usage() and `lezz <cmd> --help`
+// both read it, so the two cannot describe a command differently.
+type commandDoc struct {
+	// path is what the user types after the program name: "demo", or
+	// "app install". A parent entry ("app") answers for its sub-actions.
+	path string
+	// display is the line usage() prints, arguments included.
+	display string
+	// synopsis is the one-line description.
+	synopsis string
+	// listed marks the rows usage() prints; parents and sub-actions are
+	// reachable through `lezz <cmd> --help` without cluttering the top level.
+	listed bool
+}
+
+// commandDocs is the single source for the command list and for per-command
+// help. Order is the order usage() prints.
+var commandDocs = []commandDoc{
+	{"demo", "lezz demo", "Launch a self-contained demo cluster", true},
+	{"auto", "lezz auto", "Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry", true},
+	{"queue", "lezz queue [--config file]", "Run a spool + FIFO queue sidecar for a rate-limited upstream", true},
+	{"cache", "lezz cache [--config file]", "Serve a read-through cache of GitHub PR view/diff data", true},
+	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},
+	{"seed init", "lezz seed init [--surface base]", "Create seed.json (project id, surface, auth ref)", true},
+	{"see", "lezz see", "Read seed.json, show the 42i start and surface", true},
+	{"debug", "lezz debug keygen|lease|fetch-keys", "Debug lease keys and signing", true},
+	{"anon", "lezz anon [--lease FILE] [--listen host:port]", "Serve the anonymous MCP surface (empty tool list); the debug socket needs a valid lease", true},
+	{"app", "lezz app install|open|info|uninstall", "Wrap the lezz binary in a macOS .app: a stable identity for TCC permissions and passkeys", false},
+	{"app install", "lezz app install [--dock]", "Build and sign Lezz.app for TCC permissions/passkeys", true},
+	{"app open", "lezz app open [-- args...]", "Launch Lezz.app through LaunchServices (default: auto)", true},
+	{"app info", "lezz app info", "Show the bundle identity and signature", true},
+	{"app uninstall", "lezz app uninstall [--force]", "Remove Lezz.app", true},
+	{"auth", "lezz auth github|status|logout", "GitHub device-flow auth; the token lives in the platform credential store", false},
+	{"auth github", "lezz auth github", "Sign in with GitHub device flow (token in keychain)", true},
+	{"auth status", "lezz auth status", "Show the stored GitHub identity", true},
+	{"auth logout", "lezz auth logout", "Delete the stored GitHub token", true},
+	{"mcp", "lezz mcp [--cache-url URL]", "Serve the read-only wrapper (debug/trusted)", true},
+	{"run", "lezz run <tool> [args...]", "Replace lezz with the tool (exec)", true},
+	{"start", "lezz start <tool> [args...]", "Spawn the tool as a child process (wait)", true},
+	{"install", "lezz install <tool>", "Download and install a managed tool", true},
+	{"purge", "lezz purge", "Remove services, binaries, and Go caches for all managed tools", true},
+	{"update", "lezz update", "Check for and apply lezz self-update", true},
+	{"service", "lezz service install|remove|list|purge", "Configure launchd services for managed tools", false},
+	{"service install", "lezz service install <tool>", "Configure launchd service for a tool", true},
+	{"service remove", "lezz service remove <tool>", "Remove daemon config for a tool", true},
+	{"service list", "lezz service list", "List all installed lezz services", true},
+	{"service purge", "lezz service purge", "Unload and remove all lezz services", true},
+	{"agent", "lezz agent setup|remove|show|build", "Wire an ACP agent into an editor's settings", false},
+	{"agent setup", "lezz agent setup [editor]", "Wire an ACP agent into an editor's settings", true},
+	{"agent build", "lezz agent build [--src DIR]", "Fetch/build workspace-agent into ~/.lezz/bin", true},
+	{"agent remove", "lezz agent remove [editor]", "Remove it (requires --yes)", true},
+	{"agent show", "lezz agent show [editor]", "Show the wired agent", true},
+	{"version", "lezz version", "Print version", true},
+}
+
+// usageWidth aligns the synopsis column to the longest displayed invocation.
+var usageWidth = func() int {
+	w := 0
+	for _, d := range commandDocs {
+		if d.listed && len(d.display) > w {
+			w = len(d.display)
+		}
+	}
+	return w
+}()
+
+// lookupCommand resolves a typed path to its doc: an exact match wins, then
+// the longest parent whose path is a prefix of it ("app install" → "app").
+func lookupCommand(path string) (commandDoc, bool) {
+	path = strings.TrimSpace(path)
+	var best commandDoc
+	found := false
+	for _, d := range commandDocs {
+		if d.path == path {
+			return d, true
+		}
+		if strings.HasPrefix(path, d.path+" ") && (!found || len(d.path) > len(best.path)) {
+			best, found = d, true
+		}
+	}
+	return best, found
+}
+
+// printCommandUsage writes usage for one command path: its synopsis, its
+// invocation, and its flags when it has a flag set. Nothing here has a side
+// effect — that is the point of handling help before any command body runs.
+func printCommandUsage(w io.Writer, path string, fs *flag.FlagSet) {
+	path = strings.TrimSpace(path)
+	usageLine := "lezz " + path
+	derived := true
+	if doc, ok := lookupCommand(path); ok {
+		_, _ = fmt.Fprintf(w, "%s — %s\n\n", usageLine, doc.synopsis)
+		// A doc for this exact path knows its arguments; a parent's display
+		// line names the sibling actions instead.
+		if doc.path == path {
+			usageLine = doc.display
+			derived = false
+		}
+	}
+	flags := 0
+	if fs != nil {
+		fs.VisitAll(func(*flag.Flag) { flags++ })
+	}
+	_, _ = fmt.Fprintf(w, "Usage:\n  %s", usageLine)
+	if flags > 0 && derived {
+		_, _ = fmt.Fprint(w, " [flags]")
+	}
+	_, _ = fmt.Fprintln(w)
+	if flags > 0 {
+		out := fs.Output()
+		fs.SetOutput(w)
+		_, _ = fmt.Fprintln(w, "\nFlags:")
+		fs.PrintDefaults()
+		fs.SetOutput(out)
+	}
+	_, _ = fmt.Fprintln(w, "\nRun 'lezz --help' for the full command list.")
+}
+
 func usage() {
-	fmt.Print(`lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner
+	printUsage(os.Stdout)
+}
 
-Usage:
-  lezz demo                          Launch a self-contained demo cluster
-  lezz auto                          Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
-  lezz queue [--config file]         Run a spool + FIFO queue sidecar for a rate-limited upstream
-  lezz cache [--config file]         Serve a read-through cache of GitHub PR view/diff data
-  lezz seed init [--surface base]    Create seed.json (project id, surface, auth ref)
-  lezz see                           Read seed.json, show the 42i start and surface
-  lezz debug keygen|lease|fetch-keys Debug lease keys and signing
-  lezz anon --lease FILE             Empty proxy; debug socket only with a valid lease
-  lezz anon [--listen host:port]     Serve the anonymous MCP surface (empty tool list)
-  lezz app install [--dock]          Build and sign Lezz.app for TCC permissions/passkeys
-  lezz app open [-- args...]         Launch Lezz.app through LaunchServices (default: auto)
-  lezz app info                      Show the bundle identity and signature
-  lezz app uninstall [--force]       Remove Lezz.app
-  lezz auth github                   Sign in with GitHub device flow (token in keychain)
-  lezz auth status                   Show the stored GitHub identity
-  lezz auth logout                   Delete the stored GitHub token
-  lezz mcp [--cache-url URL]         Serve the read-only wrapper (debug/trusted)
-  lezz run <tool> [args...]          Replace lezz with the tool (exec)
-  lezz start <tool> [args...]        Spawn the tool as a child process (wait)
-  lezz install <tool>                Download and install a managed tool
-  lezz purge                         Remove services, binaries, and Go caches for all managed tools
-  lezz update                        Check for and apply lezz self-update
-  lezz service install <tool>        Configure launchd service for a tool
-  lezz service remove <tool>         Remove daemon config for a tool
-  lezz service list                  List all installed lezz services
-  lezz service purge                 Unload and remove all lezz services
-  lezz agent setup [editor]          Wire an ACP agent into an editor's settings
-  lezz agent build [--src DIR]       Fetch/build workspace-agent into ~/.lezz/bin
-  lezz agent remove [editor]         Remove it (requires --yes)
-  lezz agent show [editor]           Show the wired agent
-  lezz version                       Print version
-
+func printUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, "lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner\n\nUsage:\n")
+	for _, d := range commandDocs {
+		if !d.listed {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "  %-*s  %s\n", usageWidth, d.display, d.synopsis)
+	}
+	_, _ = fmt.Fprint(w, `
 Managed tools: lezz, adhd, ocd-smoke-alarm, tuner
+
+Every command accepts -h/--help and prints its usage instead of running:
+  lezz <command> --help
 `)
 }
