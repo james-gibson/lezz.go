@@ -1826,7 +1826,7 @@ func printCommandUsage(w io.Writer, path string, fs *flag.FlagSet) {
 	usageLine := "lezz " + path
 	derived := true
 	if doc, ok := lookupCommand(path); ok {
-		fmt.Fprintf(w, "%s — %s\n\n", usageLine, doc.synopsis)
+		_, _ = fmt.Fprintf(w, "%s — %s\n\n", usageLine, doc.synopsis)
 		// A doc for this exact path knows its arguments; a parent's display
 		// line names the sibling actions instead.
 		if doc.path == path {
@@ -1838,19 +1838,19 @@ func printCommandUsage(w io.Writer, path string, fs *flag.FlagSet) {
 	if fs != nil {
 		fs.VisitAll(func(*flag.Flag) { flags++ })
 	}
-	fmt.Fprintf(w, "Usage:\n  %s", usageLine)
+	_, _ = fmt.Fprintf(w, "Usage:\n  %s", usageLine)
 	if flags > 0 && derived {
-		fmt.Fprint(w, " [flags]")
+		_, _ = fmt.Fprint(w, " [flags]")
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if flags > 0 {
 		out := fs.Output()
 		fs.SetOutput(w)
-		fmt.Fprintln(w, "\nFlags:")
+		_, _ = fmt.Fprintln(w, "\nFlags:")
 		fs.PrintDefaults()
 		fs.SetOutput(out)
 	}
-	fmt.Fprintln(w, "\nRun 'lezz --help' for the full command list.")
+	_, _ = fmt.Fprintln(w, "\nRun 'lezz --help' for the full command list.")
 }
 
 func usage() {
@@ -1858,14 +1858,14 @@ func usage() {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, "lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner\n\nUsage:\n")
+	_, _ = fmt.Fprint(w, "lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner\n\nUsage:\n")
 	for _, d := range commandDocs {
 		if !d.listed {
 			continue
 		}
-		fmt.Fprintf(w, "  %-*s  %s\n", usageWidth, d.display, d.synopsis)
+		_, _ = fmt.Fprintf(w, "  %-*s  %s\n", usageWidth, d.display, d.synopsis)
 	}
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, `
 Managed tools: lezz, adhd, ocd-smoke-alarm, tuner
 
 Every command accepts -h/--help and prints its usage instead of running:
