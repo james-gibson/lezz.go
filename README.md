@@ -101,7 +101,7 @@ Each tool can be run as a macOS LaunchAgent under the `co.james-gibson.lab.*` na
 | Tool | Profile | Args | Description |
 |---|---|---|---|
 | `lezz` | `demo` | `demo` | self-contained demo cluster |
-| `adhd` | `idle` | `--headless` | headless MCP server, no smoke-alarm connected |
+| `adhd` | `idle` | `--headless --mcp-addr 127.0.0.1:9090` | headless MCP server on loopback `127.0.0.1:9090`, no smoke-alarm connected |
 | `ocd-smoke-alarm` | `idle` | _(none)_ | running, no targets configured |
 | `tuner` | `idle` | _(none)_ | running, no configuration |
 
