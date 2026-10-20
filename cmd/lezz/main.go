@@ -1108,7 +1108,7 @@ func resolveAgentCommand(explicit string) (string, error) {
 }
 
 func resolveExecutable(v string) (string, error) {
-	if st, err := os.Stat(v); err == nil && !st.IsDir() {
+	if st, err := os.Stat(v); err == nil && !st.IsDir() { //nolint:gosec // --command is the user asking for this exact path
 		return v, nil
 	}
 	return exec.LookPath(v)
