@@ -187,14 +187,29 @@ file is `~/.config/zed/settings.json` (or `$XDG_CONFIG_HOME/zed/settings.json`).
 
 ```sh
 lezz agent setup zed --command /path/to/workspace-agent
+lezz agent build --src ~/projects/personal/lab-safety
 lezz agent show zed
 lezz agent remove zed --yes
 ```
 
 The command is resolved in this order: `--command`, `$LEZZ_WORKSPACE_AGENT`,
 `~/.lezz/bin/workspace-agent`, then `workspace-agent` on `PATH`. If none resolve,
-lezz refuses rather than writing an entry that cannot start. The default args run
-the agent on the tmpdir host, rooted at `~/.lezz/workspaces/<session>`.
+`lezz agent setup` fetches and builds the agent into `~/.lezz/bin` (unless
+`--no-build`). `lezz agent build` does the same explicitly:
+
+```sh
+lezz agent build [--src DIR] [--out PATH] [--no-fetch]
+```
+
+It looks for a local `lab-safety` checkout first (`$LEZZ_WORKSPACE_AGENT_SRC`,
+the current directory and its parents, then common `~/projects/...` locations).
+If none exists, it clones `https://github.com/james-gibson/lab-safety.git` into
+`~/.lezz/src/lab-safety` and builds `lab/agent`. The clone path requires
+`lab/agent` to be committed and pushed; a local checkout works immediately.
+
+This is the interim path. Long term `workspace-agent` should be a registered
+managed tool with release assets, so `lezz install workspace-agent` and
+`lezz auto` can install it like adhd and ocd-smoke-alarm.
 
 The settings file is JWCC (JSON with comments and trailing commas), so the edit
 is a **splice**: only `agent_servers.<name>` is written, and every other byte —

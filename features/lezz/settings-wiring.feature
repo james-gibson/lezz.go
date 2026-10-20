@@ -39,12 +39,20 @@ Feature: Editor settings wiring
     Then a "settings.json.bak-<timestamp>" copy holds the previous bytes
     And the copy has the same permissions as the original
 
-  Scenario: lezz refuses an agent it cannot resolve
+  Scenario: a missing workspace agent is built
     Given no workspace agent can be resolved
+    And the lab-safety source is available
     When I run "lezz agent setup zed"
+    Then the workspace agent is built into lezz's bin directory
+    And "agent_servers.workspace" is present
+    And its command is the built binary
+
+  Scenario: lezz refuses an agent it cannot resolve when building is disabled
+    Given no workspace agent can be resolved
+    When I run "lezz agent setup zed --no-build"
     Then the command fails
     And the settings file is unchanged
-    And the error names how to build the agent and how to pass --command
+    And the error names "lezz agent build" and how to pass --command
 
   Scenario: a malformed settings file is refused, not repaired
     Given the settings file is not valid JSON or JWCC
