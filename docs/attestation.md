@@ -1130,8 +1130,9 @@ claim time, and the attestation records that a binding exists.
 - the witness loop, the holonomy check over commitments, and the durable workspace as a
   tripwire.
 
-**Measured, not yet met:** the portability score. Every declared tensor edge currently has
-`w: unset`, so the coupling is fully backfilled and the ranking is local.
+**Measured, not yet met:** the portability score — 7 of 21 imaginary slots and 0 of 17
+tensor weights are declared (*Declared versus backfilled*), so both the departure axis and
+the coupling are currently filled locally.
 
 **Open:** the six decisions above, and the challenge-binding format that makes
 recertification non-replayable.
