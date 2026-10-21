@@ -805,8 +805,7 @@ func cmdInstall(ctx context.Context) {
 
 	binDir, _ := tools.BinDir()
 	if binDir != "" && !isOnPath(binDir) {
-		fmt.Printf("\nAdd lezz's bin directory to your PATH:\n")
-		fmt.Printf("  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc && source ~/.zshrc\n", binDir)
+		fmt.Print(pathHint(binDir, os.Getenv("SHELL")))
 	}
 }
 
@@ -1444,6 +1443,58 @@ func isOnPath(dir string) bool {
 		}
 	}
 	return false
+}
+
+// pathHint is the guidance printed when lezz's bin directory is not on PATH.
+//
+// It never hands over an unguarded append. `echo ... >> ~/.zshrc` is safe to
+// read and dangerous to paste twice: the print was already gated on PATH, but
+// the edit was not, so one real ~/.zshrc collected 294 identical exports
+// (james-gibson/lezz.go#15). The permanent line is therefore gated on the file's
+// contents, and the session line is separate so nothing has to be appended at
+// all.
+func pathHint(binDir, shellPath string) string {
+	exportLine := fmt.Sprintf("export PATH=\"%s:$PATH\"", binDir)
+
+	var b strings.Builder
+	b.WriteString("\nAdd lezz's bin directory to your PATH:\n\n")
+	fmt.Fprintf(&b, "  this shell:  %s\n", exportLine)
+
+	profile := shellProfile(shellPath)
+	if profile == "" {
+		b.WriteString("\n  add that line to your shell profile to make it permanent.\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n  once, in %s — appends only if the line is absent:\n", profile)
+	fmt.Fprintf(&b, "  %s\n", pathProfileCommand(exportLine, profile))
+	return b.String()
+}
+
+// pathProfileCommand is the copy-pasteable profile edit: grep decides, and the
+// echo only runs when the line is missing. Running it any number of times
+// leaves exactly one line. -s keeps the first run quiet when the profile does
+// not exist yet.
+func pathProfileCommand(exportLine, profile string) string {
+	return fmt.Sprintf("grep -qsF '%s' %s || echo '%s' >> %s", exportLine, profile, exportLine, profile)
+}
+
+// shellProfile names the startup file that holds a POSIX export line, or "" when
+// this hint cannot be trusted for the shell — fish, for one, does not take
+// `export PATH=...`, so it gets the session line only.
+func shellProfile(shellPath string) string {
+	if strings.TrimSpace(shellPath) == "" {
+		return "~/.profile"
+	}
+	switch shell := filepath.Base(shellPath); {
+	case strings.Contains(shell, "zsh"):
+		return "~/.zshrc"
+	case strings.Contains(shell, "bash"):
+		return "~/.bash_profile"
+	case shell == "sh" || shell == "dash" || shell == "ksh":
+		return "~/.profile"
+	default:
+		return ""
+	}
 }
 
 // lezz auth github|status|logout
