@@ -9,6 +9,11 @@
 # X-Env-Var-ENV-Desc: Deployment environment label (dev, staging, production)
 # X-Env-Var-BIN_PATH: /usr/local/bin/lezz
 # X-Env-Var-BIN_PATH-Desc: Install path of the Go binary
+# X-Env-Var-appfile: ${DIRECTORY}/files/lezz
+# X-Env-Var-appfile-Desc: The statically built binary to install
+# X-Env-Var-appfile-Required: n
+# X-Env-Var-appfile-Valid: string
+# X-Env-Var-appfile-Set: y
 # METAEND
 ---
 
@@ -23,7 +28,9 @@ mmdebstrap:
       # binary at the filesystem root (james-gibson/lezz.go#7).
       bin_path="${IGconf_lezz_bin_path:-/usr/local/bin/lezz}"
       env_label="${IGconf_lezz_env:-staging}"
-      src="${DIRECTORY}/files/lezz"
+      # ${DIRECTORY} is only expanded in layer metadata, not in hook bodies, so
+      # the binary's path arrives as the appfile variable (see METAEND above).
+      src="${IGconf_lezz_appfile}"
       if [ ! -f "${src}" ]; then
         echo "lezz layer: ${src} is missing; the release workflow must build it before the image" >&2
         exit 1
