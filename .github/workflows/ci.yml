@@ -44,3 +44,36 @@ jobs:
 
       - name: Build binary
         run: go build ./cmd/lezz
+
+  # .goreleaser.yml advertises six targets. Before this job existed nothing built
+  # anything except the host platform, so the Windows targets were broken for as
+  # long as the release config had claimed them (james-gibson/lezz.go#16).
+  # Keep the matrix in step with `builds[0].goos`/`goarch` in .goreleaser.yml.
+  release-target-builds:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build ./cmd/lezz
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o /dev/null ./cmd/lezz
