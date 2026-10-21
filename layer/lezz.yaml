@@ -1,6 +1,7 @@
 # layer/lezz.yaml  (LAYER FILE - mmdebstrap block belongs here)
 # METABEGIN
 # X-Env-Layer-Name: lezz
+# X-Env-Layer-Version: 1.0.0
 # X-Env-Layer-Desc: Embed the Go app and label the deployment environment
 # X-Env-Layer-Category: device
 # X-Env-VarPrefix: lezz
