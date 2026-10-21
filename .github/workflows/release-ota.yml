@@ -125,12 +125,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ensure the contents file points at the freshly built image.
-          # (Your _contents_.yaml should reference the image via an
-          #  image-sparse payload; adjust path if the build placed it elsewhere.)
-          otamaker -w "${OTA_CONTENTS_FILE}"
+          # otamaker resolves every payload's name relative to the working
+          # directory, so run from the contents file's own directory. Payload
+          # names are the file names inside the artefact, not paths.
+          cd "$(dirname "${OTA_CONTENTS_FILE}")"
+          otamaker -w "$(basename "${OTA_CONTENTS_FILE}")"
 
-          ARTIFACT="$(grep -E '^\s*name:' "${OTA_CONTENTS_FILE}" \
+          ARTIFACT="$(grep -E '^\s*name:' "$(basename "${OTA_CONTENTS_FILE}")" \
                       | head -n1 | sed -E 's/^\s*name:\s*//; s/["'"'"']//g' | xargs)"
 
           if [ ! -f "${ARTIFACT}" ]; then
@@ -140,6 +141,9 @@ jobs:
           fi
 
           SHA="$(cut -d' ' -f1 "${ARTIFACT}.sha256sum")"
+          # Keep the published asset names flat, as the release body promises.
+          mv "${ARTIFACT}" "${ARTIFACT}.sha256sum" ..
+          cd ..
           echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
