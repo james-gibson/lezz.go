@@ -177,7 +177,7 @@ func writeValidatedAlarmConfig(ctx context.Context, dir, name, binary string, cf
 		return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
 	}
 	fmt.Fprintf(os.Stderr,
-		"warning: installed ocd-smoke-alarm does not support cluster_id; base cluster links will not self-trust — run: lezz install ocd-smoke-alarm\n")
+		"warning: installed ocd-smoke-alarm does not support cluster_id; base cluster links will not self-trust — run: lezz tools upgrade ocd-smoke-alarm\n")
 	return path, nil
 }
 

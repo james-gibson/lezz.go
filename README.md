@@ -33,7 +33,8 @@ lezz auto                              # start a base cluster — empty and awai
 
 # Tool lifecycle
 lezz install <tool>                    # download and install a managed tool
-lezz update                            # self-update lezz to the latest release
+lezz tools upgrade [tool...]           # upgrade managed tools to their latest releases
+lezz update                            # update lezz and all managed tools
 lezz version                           # print tool versions and daemon status
 
 # Process control
@@ -91,6 +92,15 @@ lezz install tuner
 ```
 
 Binaries land in `~/.lezz/bin/`. If that directory isn't on your `PATH`, `lezz install` will print the one-liner to add it.
+
+Installed tools are **not** left to rot: `lezz tools upgrade` compares each binary's
+`-v` output with its latest GitHub release and reinstalls it when it is older.
+`lezz update` does the same for every managed tool after self-updating lezz.
+
+```sh
+lezz tools upgrade                      # every managed tool except lezz
+lezz tools upgrade ocd-smoke-alarm      # one tool
+```
 
 ---
 
@@ -235,12 +245,29 @@ entry without touching the file. Zed detects the change without a restart.
 
 ## lezz update
 
-`lezz update` checks GitHub for a newer release and atomically replaces the running binary.
+`lezz update` updates lezz itself **and every managed tool**. lezz is checked and
+atomically replaced from its own releases; each tool (`adhd`, `ocd-smoke-alarm`,
+`tuner`) is asked for its version with `-v`, compared with its latest GitHub
+release, and reinstalled only when it is older.
 
 ```sh
-lezz v0.1.25 — checking for updates...
-new version available: v0.1.26 → applying...
-updated to v0.1.26 — restart lezz to use the new version
+lezz v0.5.1 — checking for updates...
+new lezz version available: v0.5.2 → applying...
+updated lezz to v0.5.2 — restart lezz to use the new version
+
+managed tools:
+  adhd             0.8.6 → 0.11.1
+  ocd-smoke-alarm  up to date (0.11.0)
+  tuner            up to date (0.1.0)
+```
+
+A tool whose version cannot be determined (a source build that reports only a
+commit hash) is treated as stale and replaced with the released build, the same
+rule lezz applies to itself. `lezz tools upgrade [tool...]` runs only that half —
+useful when a released tool fix is the thing you are waiting for, e.g.
+
+```sh
+lezz tools upgrade ocd-smoke-alarm
 ```
 
 **Pseudo-version and dirty-build detection:** dev builds (`v0.1.25-0.20260404234801-2a30d6a85e23`) and dirty local builds (`+dirty`) are treated as stale regardless of the version number — `lezz update` will always apply the latest release when run from such a build. Clean tagged releases (`v1.2.3`, `v1.2.3-alpha.1`) are compared normally.
