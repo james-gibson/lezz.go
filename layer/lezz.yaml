@@ -1,18 +1,39 @@
 # layer/lezz.yaml  (LAYER FILE - mmdebstrap block belongs here)
 # METABEGIN
 # X-Env-Layer-Name: lezz
-# X-Env-Layer-Description: Embed the Go app and label the deployment environment
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Desc: Embed the Go app and label the deployment environment
 # X-Env-Layer-Category: device
 # X-Env-VarPrefix: lezz
 # X-Env-Var-ENV: staging
-# X-Env-Var-ENV-Description: Deployment environment label (dev, staging, production)
+# X-Env-Var-ENV-Desc: Deployment environment label (dev, staging, production)
 # X-Env-Var-BIN_PATH: /usr/local/bin/lezz
-# X-Env-Var-BIN_PATH-Description: Install path of the Go binary
+# X-Env-Var-BIN_PATH-Desc: Install path of the Go binary
+# X-Env-Var-appfile: ${DIRECTORY}/files/lezz
+# X-Env-Var-appfile-Desc: The statically built binary to install
+# X-Env-Var-appfile-Required: n
+# X-Env-Var-appfile-Valid: string
+# X-Env-Var-appfile-Set: y
 # METAEND
 ---
 
 mmdebstrap:
   customize-hooks:
     - |
-      install -m 0755 "${DIRECTORY}/files/lezz" "${1}${IGconf_lezz_BIN_PATH}"
-      echo "APP_ENV=${IGconf_lezz_ENV}" >> "${1}/etc/environment"
+      set -eu
+      # rpi-image-gen lowercases the variable name it exposes: an X-Env-Var-ENV
+      # declared above becomes IGconf_lezz_env, not IGconf_lezz_ENV. Reading the
+      # upper-case form silently yields an empty string — the env label fell back
+      # to the layer default and BIN_PATH expanded to nothing, which installs the
+      # binary at the filesystem root (james-gibson/lezz.go#7).
+      bin_path="${IGconf_lezz_bin_path:-/usr/local/bin/lezz}"
+      env_label="${IGconf_lezz_env:-staging}"
+      # ${DIRECTORY} is only expanded in layer metadata, not in hook bodies, so
+      # the binary's path arrives as the appfile variable (see METAEND above).
+      src="${IGconf_lezz_appfile}"
+      if [ ! -f "${src}" ]; then
+        echo "lezz layer: ${src} is missing; the release workflow must build it before the image" >&2
+        exit 1
+      fi
+      install -D -m 0755 "${src}" "${1}${bin_path}"
+      printf 'APP_ENV=%s\n' "${env_label}" >> "${1}/etc/environment"

@@ -1,8 +1,19 @@
-
+# Base image for the lab: a minimal Debian image with `lezz` installed.
+# The alarms themselves are not baked in — `lezz install <tool>` fetches them
+# from their own ARM64 releases, which is what keeps this image a base image.
 layer:
   base: trixie-minbase
   device: rpi3
   app: lezz
+
+# The image layer assembles the partition layout and emits the .img artefact.
+# Without it the pipeline only builds a filesystem and produces no image
+# (james-gibson/lezz.go#7, #18).
+image:
+  layer: image-rpios
+  name: lezz-rpi3
+  boot_part_size: 200%
+  root_part_size: 300%
 
 # variable overrides are fine in the config file:
 lezz:
