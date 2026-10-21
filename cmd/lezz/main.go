@@ -172,21 +172,178 @@ func main() {
 	}
 }
 
-// lezz demo
-// Launches a self-contained demo cluster: 2 ocd-smoke-alarm instances + adhd headless.
+// lezz demo [start|stop|status|restart] [--*-port N]
+//
+// Bare `lezz demo` runs the cluster in the foreground. `start` runs the same
+// cluster detached, publishing ~/.lezz/demo-state.json so `status` and `stop`
+// can reach it from any terminal.
 func cmdDemo(ctx context.Context) {
-	if helpOnly("demo", os.Args[2:]) {
+	args := os.Args[2:]
+	if len(args) > 0 {
+		switch args[0] {
+		case "start":
+			cmdDemoStart(ctx, args[1:])
+			return
+		case "stop":
+			cmdDemoStop(args[1:])
+			return
+		case "status":
+			cmdDemoStatus(ctx, args[1:])
+			return
+		case "restart":
+			cmdDemoRestart(ctx, args[1:])
+			return
+		}
+	}
+
+	fs, flags := newDemoFlagSet("demo")
+	if !parseOrHelp(fs, args) {
 		return
 	}
-	// demo takes no arguments. Refusing them keeps a mistyped flag from
-	// launching a second cluster — the failure mode that `demo --help` had.
-	if err := noArguments("demo", os.Args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, "demo:", err)
-		os.Exit(2)
-	}
-	if err := demo.Run(ctx); err != nil {
+	noPositional("demo", fs)
+	if err := demo.Run(ctx, flags.options()); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)
 		os.Exit(1)
+	}
+}
+
+// cmdDemoStart runs the cluster detached and waits until it publishes its
+// endpoints.
+func cmdDemoStart(ctx context.Context, args []string) {
+	fs, flags := newDemoFlagSet("demo start")
+	if !parseOrHelp(fs, args) {
+		return
+	}
+	noPositional("demo start", fs)
+
+	state, err := demo.StartDetached(ctx, flags.options())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "demo start:", err)
+		os.Exit(1)
+	}
+	printDemoState(state)
+	if logPath, logErr := demo.LogPath(); logErr == nil {
+		fmt.Printf("\nlogs         %s\n", logPath)
+	}
+	fmt.Print("stop         lezz demo stop\n")
+}
+
+func cmdDemoStop(args []string) {
+	if helpOnly("demo stop", args) {
+		return
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "demo stop: unexpected argument %q\n", args[0])
+		os.Exit(2)
+	}
+	if _, ok := demo.RunningState(); !ok {
+		fmt.Println("demo: not running")
+		return
+	}
+	if err := demo.Stop(15 * time.Second); err != nil {
+		fmt.Fprintln(os.Stderr, "demo stop:", err)
+		os.Exit(1)
+	}
+	fmt.Println("demo stopped")
+}
+
+func cmdDemoStatus(ctx context.Context, args []string) {
+	if helpOnly("demo status", args) {
+		return
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "demo status: unexpected argument %q\n", args[0])
+		os.Exit(2)
+	}
+
+	state, ok := demo.RunningState()
+	if !ok {
+		fmt.Println("demo: not running")
+		os.Exit(1)
+	}
+	printDemoState(state)
+	fmt.Printf("started      %s\n", state.StartedAt.Local().Format(time.RFC3339))
+
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	fmt.Println()
+	for _, h := range demo.Probe(probeCtx, state) {
+		mark := "down"
+		if h.OK {
+			mark = "ok"
+		}
+		detail := ""
+		if !h.OK && h.Detail != "" {
+			detail = " (" + h.Detail + ")"
+		}
+		fmt.Printf("  %-10s %-4s %s%s\n", h.Name, mark, h.Endpoint, detail)
+	}
+	if state.LogDir != "" {
+		fmt.Printf("\nlogs         %s/{alarm-a,alarm-b,adhd}.log\n", state.LogDir)
+	}
+}
+
+func cmdDemoRestart(ctx context.Context, args []string) {
+	fs, flags := newDemoFlagSet("demo restart")
+	if !parseOrHelp(fs, args) {
+		return
+	}
+	noPositional("demo restart", fs)
+
+	running, ok := demo.RunningState()
+	if ok {
+		fmt.Printf("stopping demo (pid %d)...\n", running.PID)
+	}
+	if err := demo.Stop(15 * time.Second); err != nil {
+		fmt.Fprintln(os.Stderr, "demo restart:", err)
+		os.Exit(1)
+	}
+
+	state, err := demo.StartDetached(ctx, flags.options())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "demo restart:", err)
+		os.Exit(1)
+	}
+	printDemoState(state)
+}
+
+// demoFlags holds the port pins shared by demo, demo start and demo restart.
+type demoFlags struct {
+	alarmA int
+	alarmB int
+	adhd   int
+}
+
+func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags := &demoFlags{}
+	fs.IntVar(&flags.alarmA, "alarm-a-port", 0, "pin the alarm-a health port (default: reuse the last run's port when it is free)")
+	fs.IntVar(&flags.alarmB, "alarm-b-port", 0, "pin the alarm-b health port (default: reuse the last run's port when it is free)")
+	fs.IntVar(&flags.adhd, "adhd-port", 0, "pin the adhd MCP port (default: reuse the last run's port when it is free)")
+	return fs, flags
+}
+
+func (f *demoFlags) options() demo.Options {
+	return demo.Options{AlarmAPort: f.alarmA, AlarmBPort: f.alarmB, ADHDPort: f.adhd}
+}
+
+// noPositional rejects bare arguments after the flags.
+func noPositional(cmd string, fs *flag.FlagSet) {
+	if rest := fs.Args(); len(rest) > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected argument %q\n", cmd, rest[0])
+		os.Exit(2)
+	}
+}
+
+// printDemoState is the endpoint block shared by start, status and restart.
+func printDemoState(state demo.State) {
+	fmt.Printf("demo cluster running (pid %d)\n\n", state.PID)
+	fmt.Printf("alarm-a      %s/status\n", state.Cluster.AlarmA)
+	fmt.Printf("alarm-b      %s/status\n", state.Cluster.AlarmB)
+	fmt.Printf("adhd MCP     %s\n", state.Cluster.AdhdMCP)
+	fmt.Printf("discovery    %s\n", state.Discovery)
+	if state.StableConfig != "" {
+		fmt.Printf("dashboard    adhd --config %s\n", state.StableConfig)
 	}
 }
 
@@ -1834,7 +1991,11 @@ type commandDoc struct {
 // commandDocs is the single source for the command list and for per-command
 // help. Order is the order usage() prints.
 var commandDocs = []commandDoc{
-	{"demo", "lezz demo", "Launch a self-contained demo cluster", true},
+	{"demo", "lezz demo [flags]", "Launch a self-contained demo cluster in the foreground", true},
+	{"demo start", "lezz demo start [flags]", "Start the demo cluster detached", true},
+	{"demo stop", "lezz demo stop", "Stop a running demo cluster", true},
+	{"demo status", "lezz demo status", "Show a running demo cluster and probe its endpoints", true},
+	{"demo restart", "lezz demo restart [flags]", "Restart the demo cluster, reusing the same ports when free", true},
 	{"auto", "lezz auto", "Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry", true},
 	{"queue", "lezz queue [--config file]", "Run a spool + FIFO queue sidecar for a rate-limited upstream", true},
 	{"cache", "lezz cache [--config file]", "Serve a read-through cache of GitHub PR view/diff data", true},

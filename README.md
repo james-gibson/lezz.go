@@ -28,7 +28,8 @@ receipt, a honeypot contact. Model: `kb/scripts/lab/PLANE.md`. Figures:
 
 ```sh
 # Demo cluster
-lezz demo                              # start a self-contained cluster
+lezz demo                              # start a self-contained cluster (foreground)
+lezz demo start|stop|status|restart    # detached lifecycle; stable ports
 lezz auto                              # start a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
 
 # Tool lifecycle
@@ -145,6 +146,34 @@ own lifecycle, and the facade is smoke-alarm only.
 
 On startup it prints a cluster summary including isotope trust levels from `/isotope/list`.
 
+### Lifecycle
+
+`lezz demo` runs in the foreground. To leave the cluster running:
+
+```sh
+lezz demo start                     # detached; returns once the cluster is ready
+lezz demo status                    # pid, endpoints, and a live probe of each
+lezz demo stop                      # SIGTERM, waits for the process to exit
+lezz demo restart                   # stop + start, same ports when free
+```
+
+`start` writes `~/.lezz/demo-state.json` (pid, endpoints, log directory) and sends
+the child's output to `~/.lezz/logs/demo.log`. `status` and `stop` read that file,
+so they also reach a foreground `lezz demo` started in another terminal. The state
+file is removed when the cluster exits; a state file whose process is gone is
+cleaned up on the next `status`.
+
+Ports are stable across restarts: the last run's ports are saved in
+`~/.lezz/demo-ports.json` and reused when they are still free. Pin them when the
+endpoints must be known up front:
+
+```sh
+lezz demo start --alarm-a-port 52100 --alarm-b-port 52101 --adhd-port 52102
+```
+
+A pinned port that is already in use fails the start instead of quietly moving the
+endpoint.
+
 Connect the dashboard to a running demo cluster:
 
 ```sh
@@ -156,9 +185,10 @@ adhd --config ~/.lezz/demo-adhd.yaml
 Inspect cluster state:
 
 ```sh
-curl http://localhost:8088/status | jq .
-curl http://localhost:8088/isotope/list | jq .
+lezz demo status                     # endpoints, pid, and probe results
 curl http://localhost:19100/cluster | jq .
+# alarm ports come from the status output:
+curl http://localhost:<alarm-a-port>/status | jq .
 ```
 
 ---
