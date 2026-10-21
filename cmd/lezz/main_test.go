@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"flag"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -219,5 +222,85 @@ func TestNoArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "lezz demo --help") {
 		t.Fatalf("error should point at --help: %v", err)
+	}
+}
+
+// TestPathHint_IsIdempotent is the #15 regression: the printed profile edit must
+// leave exactly one line no matter how many times it is pasted. One real
+// ~/.zshrc collected 294 copies from the old unguarded `>>`.
+func TestPathHint_IsIdempotent(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	hint := pathHint("/tmp/lezzbin", "/bin/zsh")
+	command := pathProfileCommand(`export PATH="/tmp/lezzbin:$PATH"`, "~/.zshrc")
+	if !strings.Contains(hint, command) {
+		t.Fatalf("hint does not contain the guarded command:\n%s", hint)
+	}
+	if strings.Contains(hint, "&& source ~/.zshrc") {
+		t.Errorf("hint still offers the unguarded append:\n%s", hint)
+	}
+
+	for range 3 {
+		out, err := exec.Command("sh", "-c", command).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run printed command: %v\n%s", err, out)
+		}
+		if len(bytes.TrimSpace(out)) != 0 {
+			t.Errorf("printed command is noisy on an empty profile: %q", out)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".zshrc"))
+	if err != nil {
+		t.Fatalf("read profile: %v", err)
+	}
+	if got := strings.Count(string(data), "export PATH="); got != 1 {
+		t.Errorf("profile has %d export lines after 3 runs, want 1:\n%s", got, data)
+	}
+}
+
+// TestPathHint_AppendsAlongsideOtherContent keeps the guard from being a blunt
+// "file is non-empty" check: an unrelated profile must still get the line.
+func TestPathHint_AppendsAlongsideOtherContent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(profile, []byte("export EDITOR=vim\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := pathProfileCommand(`export PATH="/tmp/lezzbin:$PATH"`, "~/.zshrc")
+	if out, err := exec.Command("sh", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	data, _ := os.ReadFile(profile)
+	if !strings.Contains(string(data), "export EDITOR=vim") {
+		t.Error("existing profile content was lost")
+	}
+	if !strings.Contains(string(data), "/tmp/lezzbin") {
+		t.Errorf("PATH line was not added:\n%s", data)
+	}
+}
+
+// TestShellProfile pins the file choice, including the shells this hint cannot
+// write for.
+func TestShellProfile(t *testing.T) {
+	for _, tc := range []struct{ shell, want string }{
+		{"/bin/zsh", "~/.zshrc"},
+		{"/usr/local/bin/zsh", "~/.zshrc"},
+		{"/bin/bash", "~/.bash_profile"},
+		{"/bin/sh", "~/.profile"},
+		{"", "~/.profile"},
+		{"/usr/local/bin/fish", ""},
+		{"/opt/homebrew/bin/nu", ""},
+	} {
+		if got := shellProfile(tc.shell); got != tc.want {
+			t.Errorf("shellProfile(%q) = %q, want %q", tc.shell, got, tc.want)
+		}
 	}
 }
