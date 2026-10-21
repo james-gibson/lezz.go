@@ -14,5 +14,18 @@
 mmdebstrap:
   customize-hooks:
     - |
-      install -m 0755 "${DIRECTORY}/files/lezz" "${1}${IGconf_lezz_BIN_PATH}"
-      echo "APP_ENV=${IGconf_lezz_ENV}" >> "${1}/etc/environment"
+      set -eu
+      # rpi-image-gen lowercases the variable name it exposes: an X-Env-Var-ENV
+      # declared above becomes IGconf_lezz_env, not IGconf_lezz_ENV. Reading the
+      # upper-case form silently yields an empty string — the env label fell back
+      # to the layer default and BIN_PATH expanded to nothing, which installs the
+      # binary at the filesystem root (james-gibson/lezz.go#7).
+      bin_path="${IGconf_lezz_bin_path:-/usr/local/bin/lezz}"
+      env_label="${IGconf_lezz_env:-staging}"
+      src="${DIRECTORY}/files/lezz"
+      if [ ! -f "${src}" ]; then
+        echo "lezz layer: ${src} is missing; the release workflow must build it before the image" >&2
+        exit 1
+      fi
+      install -D -m 0755 "${src}" "${1}${bin_path}"
+      printf 'APP_ENV=%s\n' "${env_label}" >> "${1}/etc/environment"

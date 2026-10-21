@@ -67,27 +67,39 @@ jobs:
 
       - name: Fetch rpi-image-gen
         run: |
-          git clone --depth 1 https://github.com/raspberrypi/rpi-image-gen.git
+          # Pin the release rather than tracking master: the layer search rules
+          # (-S) and the config schema are part of what this workflow depends on,
+          # and an upstream refactor would otherwise break tagged releases
+          # silently (james-gibson/lezz.go#7, #18).
+          git clone --depth 1 --branch v2.8.0 \
+            https://github.com/raspberrypi/rpi-image-gen.git
           # install its dependencies (provided by the repo's helper)
           cd rpi-image-gen
-          sudo ./install_deps.sh || true
+          sudo ./install_deps.sh
 
       - name: Build image
         id: image
         working-directory: rpi-image-gen
         env:
-          # Drive the embedded env label from the pipeline
-          IGconf_lezz_ENV: ${{ env.APP_ENV }}
+          # Drive the embedded env label from the pipeline. rpi-image-gen
+          # lowercases the variable name it exposes, so an X-Env-Var-ENV in the
+          # layer becomes IGconf_lezz_env — the upper-case form is not read
+          # (james-gibson/lezz.go#7).
+          IGconf_lezz_env: ${{ env.APP_ENV }}
         run: |
           set -euo pipefail
-          ./rpi-image-gen build -c ../${IMAGE_CONFIG}
+          # -S .. makes the repository root a layer source tree, so layer/lezz.yaml
+          # is found without copying it into the rpi-image-gen checkout. Without
+          # it the search path is only the tool's own device/image/layer dirs and
+          # the build dies with "Layer 'lezz' not found" (james-gibson/lezz.go#7).
+          ./rpi-image-gen build -S .. -c "../${IMAGE_CONFIG}" 2>&1 | tee ../rpi-image-gen.log
 
-          # Locate the produced image (.img / .img.xz). Adjust glob if needed.
-          IMG="$(find . -maxdepth 4 -type f \( -name '*.img' -o -name '*.img.xz' \) \
+          # Locate the produced image (./work/image-<name>/<name>.img, optionally .xz).
+          IMG="$(find work -maxdepth 3 -type f \( -name '*.img' -o -name '*.img.xz' \) \
                  | head -n1)"
           if [ -z "${IMG}" ]; then
             echo "No image artifact produced by rpi-image-gen" >&2
-            find . -maxdepth 4 -type f -name '*.img*' || true
+            find work -maxdepth 3 -type f | head -50 >&2 || true
             exit 1
           fi
           cp "${IMG}" "../$(basename "${IMG}")"
@@ -145,6 +157,10 @@ jobs:
           if-no-files-found: error
 
       - name: Create GitHub Release
+        # A manual run from a branch has no tag to release; only tagged pushes
+        # publish. The artifact upload above still runs, so a dispatch is a full
+        # dry run of the pipeline (james-gibson/lezz.go#18).
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
