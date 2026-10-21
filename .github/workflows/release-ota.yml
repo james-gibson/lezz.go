@@ -99,9 +99,27 @@ jobs:
           ./rpi-image-gen build -S .. -c "../${IMAGE_CONFIG}" 2>&1 \
             | tee "../rpi-image-gen-${{ matrix.variant }}.log"
 
-          # Locate the produced image (./work/image-<name>/<name>.img, optionally .xz).
-          IMG="$(find work -maxdepth 3 -type f \( -name '*.img' -o -name '*.img.xz' \) \
-                 | head -n1)"
+          # Locate the produced image. A build leaves three copies behind:
+          #   work/image-<name>/<name>.img              the raw image (~1.7 GB)
+          #   work/deploy-<ver>/<name>.img.zst          the same image, compressed
+          #   work/deploy-<ver>/<name>.img.sparse.zst   the sparse form OTA uses
+          # Publish the compressed one. GitHub caps a single release asset at
+          # 2 GB, and two raw images per tag already spend ~3.5 GB of release
+          # storage, while Raspberry Pi Imager flashes a .img.zst directly with
+          # no manual decompression (james-gibson/lezz.go#34). The deploy-base
+          # layer compresses by default (IGconf_deploy_compression=zstd), so the
+          # .zst is normally present; the raw .img stays as the fallback for a
+          # build where compression is turned off.
+          IMG=""
+          DEPLOY_DIR="$(find work -maxdepth 1 -type d -name 'deploy-*' -print -quit)"
+          if [ -n "${DEPLOY_DIR}" ]; then
+            IMG="$(find "${DEPLOY_DIR}" -maxdepth 1 -type f \
+                   -name '*.img.zst' ! -name '*.sparse.zst' -print -quit)"
+          fi
+          if [ -z "${IMG}" ]; then
+            echo "No compressed image in work/deploy-*/; falling back to the raw .img" >&2
+            IMG="$(find work -maxdepth 3 -type f -name '*.img' -print -quit)"
+          fi
           if [ -z "${IMG}" ]; then
             echo "No image artifact produced by rpi-image-gen" >&2
             find work -maxdepth 3 -type f | head -50 >&2 || true
@@ -109,7 +127,7 @@ jobs:
           fi
           cp "${IMG}" "../$(basename "${IMG}")"
           echo "image_name=$(basename "${IMG}")" >> "$GITHUB_OUTPUT"
-          echo "Built image: $(basename "${IMG}")"
+          echo "Built image: $(basename "${IMG}") ($(du -h "${IMG}" | cut -f1))"
 
       - name: Upload image (${{ matrix.variant }})
         uses: actions/upload-artifact@v4
