@@ -82,62 +82,94 @@ jobs:
       - name: List artifacts
         run: ls -l dist
 
+      - name: Describe the image assets
+        env:
+          APP_ENV: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The images are named by their configs, not by this workflow, and the
+          # builder publishes whichever form it produced (.img.zst, or the raw
+          # .img if compression was off). Derive the release body from the assets
+          # that actually arrived so the instructions cannot go stale
+          # (james-gibson/lezz.go#34).
+          images=()
+          for f in dist/*.img dist/*.img.*; do
+            if [ -f "$f" ]; then
+              images+=("$(basename "$f")")
+            fi
+          done
+          if [ ${#images[@]} -eq 0 ]; then
+            echo "No image assets in dist/; refusing to describe a release without them" >&2
+            ls -l dist >&2 || true
+            exit 1
+          fi
+
+          compressed=n
+          case "${images[0]:-}" in
+            *.zst) compressed=y ;;
+          esac
+
+          {
+            echo '## Binaries, lab images, and an OTA package'
+            echo
+            echo "**Environment:** \`${APP_ENV}\`"
+            echo
+            echo "Two images come out of the same layer and differ only by config:"
+            echo
+            echo '| Asset | Boots into |'
+            echo '| --- | --- |'
+            for name in "${images[@]}"; do
+              case "$name" in
+                *-auto*) boots='`lezz auto` as a systemd service: a base cluster, empty and awaiting peers' ;;
+                *)       boots='an idle base image — `lezz` is installed, nothing runs' ;;
+              esac
+              echo "| \`${name}\` | ${boots} |"
+            done
+            echo
+            echo 'The alarms are not baked into either image: `lezz install <tool>` fetches'
+            echo 'them from their own ARM64 releases.'
+            echo
+            echo '`aptupgrade.tar.zst` is the Raspberry Pi Connect OTA package.'
+            echo
+            echo '### Install on a Raspberry Pi'
+            echo
+            echo '1. Flash an image.'
+            if [ "${compressed}" = y ]; then
+              echo '   Raspberry Pi Imager accepts the `.img.zst` assets as they are —'
+              echo '   select one and let it decompress on write, no manual step:'
+            else
+              echo '   Use Raspberry Pi Imager and select one of the `.img` assets:'
+            fi
+            for name in "${images[@]}"; do
+              case "$name" in
+                *-auto*) boots='boots into `lezz auto`' ;;
+                *)       boots='idle base image' ;;
+              esac
+              echo "   - \`${name}\` — ${boots}"
+            done
+            echo '2. One-time setup on the target Pi:'
+            echo '   ```bash'
+            echo '   # Standard Raspberry Pi OS'
+            echo '   sudo apt update'
+            echo '   sudo apt install rpi-connect rpi-connect-ota'
+            echo '   # Raspberry Pi OS Lite'
+            echo '   sudo apt install rpi-connect-lite rpi-connect-ota'
+            echo '   ```'
+            echo '3. Enable the service:'
+            echo '   ```bash'
+            echo '   rpi-connect ota on'
+            echo '   ```'
+            echo '4. Deploy via Raspberry Pi Connect using the asset URL, and verify it'
+            echo '   against the SHA256 in `aptupgrade.tar.zst.sha256sum`.'
+          } > release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
-          body: |
-            ## Binaries, lab images, and an OTA package
-
-            **Environment:** `${{ github.ref_name }}`
-
-            Two images come out of the same layer and differ only by config:
-
-            | Asset | Boots into |
-            | --- | --- |
-            | `lezz-rpi3.img` | an idle base image — `lezz` is installed, nothing runs |
-            | `lezz-rpi3-auto.img` | `lezz auto` as a systemd service: a base cluster, empty and awaiting peers |
-
-            The alarms are not baked into either image: `lezz install <tool>` fetches
-            them from their own ARM64 releases.
-
-            `aptupgrade.tar.zst` is the Raspberry Pi Connect OTA package.
-
-            ### Install on a Raspberry Pi
-
-            1. One-time setup on the target Pi:
-               ```bash
-               # Standard Raspberry Pi OS
-               sudo apt update
-               sudo apt install rpi-connect rpi-connect-ota
-               # Raspberry Pi OS Lite
-               sudo apt install rpi-connect-lite rpi-connect-ota
-               ```
-            2. Enable the service:
-               ```bash
-               rpi-connect ota on
-               ```
-            3. Deploy via Raspberry Pi Connect using the asset URL, and verify it
-               against the SHA256 in `aptupgrade.tar.zst.sha256sum`.
+          body_path: release-body.md
 
       - name: Print install instructions
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## How to install this release
-
-          ### 1. Flash an image
-          Use Raspberry Pi Imager and select one of the `.img` assets:
-          - `lezz-rpi3.img` — idle base image
-          - `lezz-rpi3-auto.img` — boots into `lezz auto`
-
-          ### 2. Or update a running device over OTA
-          One-time setup:
-          ```bash
-          sudo apt update
-          sudo apt install rpi-connect rpi-connect-ota   # or rpi-connect-lite
-          rpi-connect ota on
-          ```
-          Then deploy `aptupgrade.tar.zst` through Raspberry Pi Connect and verify
-          its SHA256 against `aptupgrade.tar.zst.sha256sum`.
-          EOF
+        run: cat release-body.md >> "$GITHUB_STEP_SUMMARY"
