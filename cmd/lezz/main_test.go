@@ -171,19 +171,19 @@ func TestPrintUsageListsEveryListedCommand(t *testing.T) {
 
 func TestPrintCommandUsage(t *testing.T) {
 	var buf bytes.Buffer
-	printCommandUsage(&buf, "demo", nil)
+	demoFS := flag.NewFlagSet("demo", flag.ContinueOnError)
+	demoFS.Int("alarm-a-port", 0, "pin the alarm-a health port")
+	printCommandUsage(&buf, "demo", demoFS)
 	out := buf.String()
 	for _, want := range []string{
 		"lezz demo — Launch a self-contained demo cluster",
-		"Usage:\n  lezz demo\n",
+		"Usage:\n  lezz demo [flags]\n",
+		"-alarm-a-port",
 		"Run 'lezz --help'",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("demo usage is missing %q:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "Flags:") {
-		t.Fatalf("demo takes no flags but printed a Flags section:\n%s", out)
 	}
 
 	buf.Reset()

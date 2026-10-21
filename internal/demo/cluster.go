@@ -370,19 +370,23 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 
 // Run launches a self-contained demo cluster and blocks until Ctrl+C or the
 // context is canceled.
-func Run(ctx context.Context) error {
-	// --- Pre-allocate ports -------------------------------------------------
-	portA, err := freePort()
-	if err != nil {
-		return fmt.Errorf("pre-allocate port for alarm-a: %w", err)
+func Run(ctx context.Context, opts Options) error {
+	// One cluster per host: a second run would fight for the discovery port and
+	// leave two state files pointing at different endpoints.
+	if running, ok := RunningState(); ok {
+		return fmt.Errorf("a demo cluster is already running (pid %d, alarm-a %s); see lezz demo status or lezz demo stop", running.PID, running.Cluster.AlarmA)
 	}
-	portB, err := freePort()
+
+	// --- Resolve ports ------------------------------------------------------
+	// Pinned ports win; otherwise the last run's ports are reused when free so a
+	// restart keeps the endpoints saved in MCP configs.
+	ports, err := resolvePorts(opts)
 	if err != nil {
-		return fmt.Errorf("pre-allocate port for alarm-b: %w", err)
+		return err
 	}
-	adhdPort, err := freePort()
-	if err != nil {
-		return fmt.Errorf("pre-allocate port for adhd MCP: %w", err)
+	portA, portB, adhdPort := ports.AlarmA, ports.AlarmB, ports.ADHD
+	if saveErr := savePorts(ports); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not record demo ports: %v\n", saveErr)
 	}
 
 	// --- Temp directories ---------------------------------------------------
@@ -545,6 +549,23 @@ func Run(ctx context.Context) error {
 			notifyExistingADHD(clusterInfo)
 		}
 	}
+
+	// --- Publish the running cluster ----------------------------------------
+	// From here on `lezz demo status|stop` can find this process. The file is
+	// removed on the way out, unless another cluster has replaced it.
+	state := State{
+		PID:          os.Getpid(),
+		StartedAt:    time.Now().UTC(),
+		Cluster:      clusterInfo,
+		Ports:        ports,
+		Discovery:    fmt.Sprintf("http://%s:%d/cluster", host, DiscoveryPort),
+		StableConfig: stableConfigPath,
+		LogDir:       tmpRoot,
+	}
+	if err := writeState(state); err != nil {
+		return fmt.Errorf("write demo state: %w", err)
+	}
+	defer removeState(state.PID)
 
 	// --- Query isotope trust level from alarm-a -----------------------------
 	trustSummary := queryIsotopeTrust(ctx, smokeAlarmURL)
