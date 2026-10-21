@@ -1,11 +1,16 @@
+name: Build images & OTA package
 
-name: Build, Image & Publish OTA Release
-
-# Publish release artifacts on tagged refs
+# Reusable builder: invoked by the Release workflow on a tag, and dispatchable on
+# its own as a full dry run. It publishes nothing — one job in the caller decides
+# what a release contains, because releases in this repository are immutable and
+# a second publisher can only fail.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Deployment environment label embedded in the image'
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       environment:
@@ -13,34 +18,36 @@ on:
         default: 'production'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  # --- rpi-image-gen ---
-  IMAGE_CONFIG: configs/my-image.yaml
-  # --- otamaker ---
   OTA_CONTENTS_FILE: ota/_contents_.yaml
   # Environment label embedded into the image (tag name, manual input, or default)
-  APP_ENV: ${{ github.event.inputs.environment || github.ref_name }}
+  APP_ENV: ${{ inputs.environment || github.ref_name }}
 
 jobs:
-  build:
+  # ---------------------------------------------------------------------------
+  # 1. One image per config variation. They differ only by config: the base
+  #    image is idle at boot, the auto image runs `lezz auto`.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Image (${{ matrix.variant }})
     # rpi-image-gen needs an ARM64 Debian/Raspberry Pi OS-like host.
-    # Use a self-hosted ARM64 runner if you have one; otherwise the GitHub
-    # ARM64 hosted runner label below works for public repos.
     runs-on: ubuntu-24.04-arm
-    outputs:
-      ota_artifact: ${{ steps.ota.outputs.artifact_name }}
-      ota_sha256:   ${{ steps.ota.outputs.sha256 }}
-      image_name:   ${{ steps.image.outputs.image_name }}
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: base
+            config: configs/my-image.yaml
+          - variant: auto
+            config: configs/my-image-auto.yaml
+    env:
+      IMAGE_CONFIG: ${{ matrix.config }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------------
-      # 1. Build the Go application (static ARM64 binary)
-      # ---------------------------------------------------------------
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -57,9 +64,6 @@ jobs:
           go build -trimpath -ldflags="-s -w -X main.buildGitHubClientID=${LEZZ_GITHUB_CLIENT_ID:-}" -o layer/files/lezz ./cmd/lezz
           file layer/files/lezz || true
 
-      # ---------------------------------------------------------------
-      # 2. Build the Pi image with rpi-image-gen (embeds binary + env)
-      # ---------------------------------------------------------------
       - name: Install rpi-image-gen prerequisites
         run: |
           sudo apt-get update
@@ -77,7 +81,7 @@ jobs:
           cd rpi-image-gen
           sudo ./install_deps.sh
 
-      - name: Build image
+      - name: Build image (${{ matrix.variant }})
         id: image
         working-directory: rpi-image-gen
         env:
@@ -92,7 +96,8 @@ jobs:
           # is found without copying it into the rpi-image-gen checkout. Without
           # it the search path is only the tool's own device/image/layer dirs and
           # the build dies with "Layer 'lezz' not found" (james-gibson/lezz.go#7).
-          ./rpi-image-gen build -S .. -c "../${IMAGE_CONFIG}" 2>&1 | tee ../rpi-image-gen.log
+          ./rpi-image-gen build -S .. -c "../${IMAGE_CONFIG}" 2>&1 \
+            | tee "../rpi-image-gen-${{ matrix.variant }}.log"
 
           # Locate the produced image (./work/image-<name>/<name>.img, optionally .xz).
           IMG="$(find work -maxdepth 3 -type f \( -name '*.img' -o -name '*.img.xz' \) \
@@ -106,9 +111,24 @@ jobs:
           echo "image_name=$(basename "${IMG}")" >> "$GITHUB_OUTPUT"
           echo "Built image: $(basename "${IMG}")"
 
-      # ---------------------------------------------------------------
-      # 3. Package the image as an OTA artifact with otamaker
-      # ---------------------------------------------------------------
+      - name: Upload image (${{ matrix.variant }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.variant }}
+          path: ${{ steps.image.outputs.image_name }}
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2. OTA package. The payload is the apt-upgrade script, not the image: the
+  #    image is flashed, the OTA updates a running device.
+  # ---------------------------------------------------------------------------
+  ota:
+    name: OTA package
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install otamaker prerequisites
         run: sudo apt-get install -y cmake python3 zstd
 
@@ -141,127 +161,17 @@ jobs:
           fi
 
           SHA="$(cut -d' ' -f1 "${ARTIFACT}.sha256sum")"
-          # Keep the published asset names flat, as the release body promises.
+          # Keep the published asset names flat.
           mv "${ARTIFACT}" "${ARTIFACT}.sha256sum" ..
           cd ..
           echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
-      # ---------------------------------------------------------------
-      # 4. Upload + publish
-      # ---------------------------------------------------------------
-      - name: Upload build artifacts (CI retention)
+      - name: Upload OTA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-artifacts
+          name: ota
           path: |
             ${{ steps.ota.outputs.artifact_name }}
             ${{ steps.ota.outputs.artifact_name }}.sha256sum
-            ${{ steps.image.outputs.image_name }}
           if-no-files-found: error
-
-      - name: Create GitHub Release
-        # A manual run from a branch has no tag to release; only tagged pushes
-        # publish. The artifact upload above still runs, so a dispatch is a full
-        # dry run of the pipeline (james-gibson/lezz.go#18).
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ${{ steps.ota.outputs.artifact_name }}
-            ${{ steps.ota.outputs.artifact_name }}.sha256sum
-            ${{ steps.image.outputs.image_name }}
-          generate_release_notes: true
-          body: |
-            ## OTA Update Package
-
-            **Environment:** `${{ env.APP_ENV }}`
-            **OTA artifact:** `${{ steps.ota.outputs.artifact_name }}`
-            **SHA256:** `${{ steps.ota.outputs.sha256 }}`
-            **Image:** `${{ steps.image.outputs.image_name }}`
-
-            ### Install on a Raspberry Pi
-
-            1. One-time setup on the target Pi:
-               ```bash
-               # Standard Raspberry Pi OS
-               sudo apt update
-               sudo apt install rpi-connect rpi-connect-ota
-               # Raspberry Pi OS Lite
-               sudo apt install rpi-connect-lite rpi-connect-ota
-               ```
-            2. Enable the service:
-               ```bash
-               rpi-connect ota on
-               ```
-            3. Deploy via Raspberry Pi Connect using the asset URL below and
-               verify against the SHA256:
-               - **Artifact:** `${{ steps.ota.outputs.artifact_name }}`
-               - **SHA256:** `${{ steps.ota.outputs.sha256 }}`
-
-      - name: Print install instructions
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## How to install this OTA update on a Raspberry Pi
-
-          ### 1. One-time setup on the Pi
-          **Standard Raspberry Pi OS:**
-          ```bash
-          sudo apt update
-          sudo apt install rpi-connect rpi-connect-ota
-          ```
-          **Raspberry Pi OS Lite:**
-          ```bash
-          sudo apt update
-          sudo apt install rpi-connect-lite rpi-connect-ota
-          ```
-
-          ### 2. Enable the OTA service
-          ```bash
-          rpi-connect ota on
-          ```
-
-          ### 3. Deploy the update
-          Use Raspberry Pi Connect and supply:
-          EOF
-          {
-            echo "- **Environment:** \`${{ env.APP_ENV }}\`"
-            echo "- **OTA artifact:** \`${{ steps.ota.outputs.artifact_name }}\`"
-            echo "- **SHA256:** \`${{ steps.ota.outputs.sha256 }}\`"
-            echo "- **Raw image:** \`${{ steps.image.outputs.image_name }}\` (flash directly with Raspberry Pi Imager if not using OTA)"
-            echo ""
-            echo "_Tip: to test OTA locally, host the file with_ \`python3 -m http.server 8000\` _and point Connect at that URL._"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ---------------------------------------------------------------------------
-  # FUTURE: Notify an external webhook when the build/publish job fails.
-  # Disabled until a webhook endpoint is provisioned.
-  # To activate:
-  #   1. Add a repository secret named FAILURE_WEBHOOK_URL.
-  #   2. Change `if: false` to: failure() && needs.build.result == 'failure'
-  # ---------------------------------------------------------------------------
-  notify-on-failure:
-    needs: build
-    runs-on: ubuntu-latest
-    if: false
-    steps:
-      - name: Send failure webhook (placeholder)
-        env:
-          WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
-        run: |
-          if [ -z "${WEBHOOK_URL:-}" ]; then
-            echo "FAILURE_WEBHOOK_URL not set; skipping notification."
-            exit 0
-          fi
-          curl -fsS -X POST "${WEBHOOK_URL}" \
-            -H "Content-Type: application/json" \
-            -d @- <<EOF
-          {
-            "event": "release_build_failed",
-            "repository": "${{ github.repository }}",
-            "ref": "${{ github.ref }}",
-            "environment": "${{ env.APP_ENV }}",
-            "run_id": "${{ github.run_id }}",
-            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          EOF
