@@ -277,6 +277,13 @@ func printRegistry(clusters []ClusterInfo) {
 //   - installs any missing managed tools (adhd, ocd-smoke-alarm), and
 //   - reuses an existing discovery registry instead of starting a competing
 //     cluster on the same host.
+//
+// The links stay out-of-process on purpose. RunAuto's chaining mechanism is
+// smoke-alarm's federation mesh, and pkg/smokealarm (the embeddable facade) does
+// not run federation in-process — it reports federation.enabled as an
+// unsupported subsystem. An embedded link here would start, warn, and never
+// join the mesh, so auto keeps spawning the binary until the facade exposes
+// federation. Run (demo) is hand-peered and does run its links in-process.
 func RunAuto(ctx context.Context) error {
 	// Auto-detect: a live registry already owns the fixed discovery port and
 	// the shared dashboard config, so reuse it rather than launching a second,

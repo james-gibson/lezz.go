@@ -123,10 +123,15 @@ lezz service list
 
 `lezz demo` starts a self-contained cluster without requiring any pre-existing configuration:
 
-- Two `ocd-smoke-alarm` instances, each watching the other
+- Two smoke-alarm links running **in-process** (`github.com/james-gibson/smoke-alarm/pkg/smokealarm`), each watching the other — no generated alarm YAML and no `ocd-smoke-alarm` subprocess
 - One `adhd` instance in headless mode, registered as an isotope with the primary smoke-alarm
 - A fixed-port discovery registry at `:19100/cluster`
 - mDNS advertisement of `_lezz-demo._tcp`
+
+The links honour `health.self_check`, `tuner.advertise`, `alerts.sinks.log` and
+per-link known-state baselines (`state-a` / `state-b`), and they shut down when
+lezz exits. `adhd` still runs as a subprocess: it is a TUI/MCP server with its
+own lifecycle, and the facade is smoke-alarm only.
 
 On startup it prints a cluster summary including isotope trust levels from `/isotope/list`.
 
@@ -176,6 +181,14 @@ Because the base cluster carries no targets until they appear, a second
 `lezz auto` run on the same host reuses the running registry, and further
 `ocd-smoke-alarm` instances started with the same federation range chain on as
 followers automatically.
+
+**Why `auto` does not embed its links.** `pkg/smokealarm` exposes the monitor,
+health, alerts and known-state subsystems but not federation — an embedded
+instance reports `federation.enabled` as unsupported. Since federation *is* how
+`auto` chains its links, adopting the facade here would start two links that
+never join the mesh. `auto` therefore keeps spawning
+`ocd-smoke-alarm serve -config …`; `demo` (hand-peered) is the path that runs
+in-process. Revisit when the facade exposes federation.
 
 ---
 

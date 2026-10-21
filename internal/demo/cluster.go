@@ -117,82 +117,6 @@ func freePort() (int, error) {
 	return port, nil
 }
 
-// smokeAlarmConfigTmpl is the minimal YAML config for one ocd-smoke-alarm instance.
-var smokeAlarmConfigTmpl = template.Must(template.New("smoke-alarm").Parse(`version: "1"
-service:
-  name: "ocd-smoke-alarm"
-  environment: "lezz-demo"
-  mode: "background"
-  log_level: "warn"
-  poll_interval: "5s"
-  timeout: "3s"
-  max_workers: 4
-
-health:
-  enabled: true
-  listen_addr: "{{.ListenAddr}}:{{.Port}}"
-  self_check: true
-  endpoints:
-    healthz: "/healthz"
-    readyz: "/readyz"
-    status: "/status"
-
-runtime:
-  lock_file: "{{.StateDir}}/lock"
-  state_dir: "{{.StateDir}}"
-  baseline_file: "{{.StateDir}}/known-good.json"
-  event_history_size: 100
-  graceful_shutdown_timeout: "5s"
-
-discovery:
-  enabled: false
-
-tuner:
-  enabled: true
-  advertise: true
-
-alerts:
-  aggressive: false
-  notify_on_regression_immediately: true
-  sinks:
-    log:
-      enabled: true
-
-targets:
-  - id: "peer"
-    enabled: true
-    protocol: "http"
-    name: "{{.PeerName}}"
-    endpoint: "http://localhost:{{.PeerPort}}/status"
-    transport: "http"
-    expected:
-      healthy_status_codes: [200]
-
-remote_agent:
-  managed_updates: true
-  update:
-    strategy: "rolling-single"
-    stop_command: "{{.Binary}} ops stop -pid-file {{.StateDir}}/ocd-smoke-alarm.pid"
-    start_command: "nohup {{.Binary}} serve -config {{.ConfigPath}} >> {{.LogPath}} 2>&1 & sleep 1"
-    verify_command: "{{.Binary}} check -config {{.ConfigPath}}"
-    rollback_on_failure: false
-    max_wait_for_healthy: "30s"
-  safety:
-    require_lock: false
-`))
-
-// smokeAlarmConfig holds template data for one smoke-alarm instance.
-type smokeAlarmConfig struct {
-	Port       int
-	ListenAddr string
-	StateDir   string
-	PeerName   string
-	PeerPort   int
-	Binary     string
-	ConfigPath string
-	LogPath    string
-}
-
 // adhdConfigTmpl is the minimal YAML config for adhd in headless mode.
 var adhdConfigTmpl = template.Must(template.New("adhd").Parse(`mcp_server:
   enabled: true
@@ -484,38 +408,53 @@ func Run(ctx context.Context) error {
 	alarmBLogPath := tmpRoot + "/alarm-b.log"
 	adhdLogPath := tmpRoot + "/adhd.log"
 
-	alarmBin, err := tools.Find("ocd-smoke-alarm")
-	if err != nil {
-		return fmt.Errorf("resolve ocd-smoke-alarm: %w", err)
-	}
-
-	// --- Write configs ------------------------------------------------------
-	configA, err := writeTempConfig(tmpRoot, "alarm-a", smokeAlarmConfigTmpl, smokeAlarmConfig{
+	// --- Start the two alarms in-process -------------------------------------
+	// Each link is a smokealarm.Instance inside lezz: no generated alarm YAML
+	// and no ocd-smoke-alarm subprocess. They are still peered by hand (each
+	// one's only target is the other's /status) — federation, which is what
+	// `lezz auto` uses to chain instances, is not exposed by the facade.
+	linkA, err := startLink(ctx, "alarm-a", linkParams{
 		Port:       portA,
 		ListenAddr: healthListenAddr,
 		StateDir:   stateA,
 		PeerName:   "alarm-b",
 		PeerPort:   portB,
-		Binary:     alarmBin,
-		ConfigPath: tmpRoot + "/alarm-a.yaml",
-		LogPath:    alarmALogPath,
-	})
+		Advertise:  true,
+	}, alarmALogPath)
 	if err != nil {
 		return err
 	}
+	defer linkA.shutdown()
 
-	configB, err := writeTempConfig(tmpRoot, "alarm-b", smokeAlarmConfigTmpl, smokeAlarmConfig{
+	linkB, err := startLink(ctx, "alarm-b", linkParams{
 		Port:       portB,
 		ListenAddr: healthListenAddr,
 		StateDir:   stateB,
 		PeerName:   "alarm-a",
 		PeerPort:   portA,
-		Binary:     alarmBin,
-		ConfigPath: tmpRoot + "/alarm-b.yaml",
-		LogPath:    alarmBLogPath,
-	})
+		Advertise:  true,
+	}, alarmBLogPath)
 	if err != nil {
 		return err
+	}
+	defer linkB.shutdown()
+
+	// The peer endpoints were rendered from the pre-allocated ports, and the
+	// facade retries on a contended port. If either link landed elsewhere, the
+	// pair would be peered at nothing — fail closed rather than run a cluster
+	// that cannot see itself.
+	if portErr := checkLinkPorts(linkA, portA, linkB, portB); portErr != nil {
+		return portErr
+	}
+
+	// --- Poll alarm readiness -----------------------------------------------
+	fmt.Println("waiting for alarm-a to become ready...")
+	if readyErr := waitReady(ctx, linkA.healthURL()); readyErr != nil {
+		return fmt.Errorf("alarm-a readiness: %w", readyErr)
+	}
+	fmt.Println("waiting for alarm-b to become ready...")
+	if readyErr := waitReady(ctx, linkB.healthURL()); readyErr != nil {
+		return fmt.Errorf("alarm-b readiness: %w", readyErr)
 	}
 
 	adhdConfigPath, err := writeTempConfig(tmpRoot, "adhd", adhdConfigTmpl, adhdConfig{
@@ -537,29 +476,6 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("write stable adhd config: %w", copyErr)
 	}
 	defer func() { _ = os.Remove(stableConfigPath) }()
-
-	// --- Start ocd-smoke-alarm instances ------------------------------------
-	cmdA, err := startProcess("ocd-smoke-alarm", []string{"serve", "-config", configA}, alarmALogPath)
-	if err != nil {
-		return fmt.Errorf("start alarm-a: %w", err)
-	}
-	defer killProcess(cmdA)
-
-	cmdB, err := startProcess("ocd-smoke-alarm", []string{"serve", "-config", configB}, alarmBLogPath)
-	if err != nil {
-		return fmt.Errorf("start alarm-b: %w", err)
-	}
-	defer killProcess(cmdB)
-
-	// --- Poll alarm readiness -----------------------------------------------
-	fmt.Println("waiting for alarm-a to become ready...")
-	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portA)); readyErr != nil {
-		return fmt.Errorf("alarm-a readiness: %w", readyErr)
-	}
-	fmt.Println("waiting for alarm-b to become ready...")
-	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portB)); readyErr != nil {
-		return fmt.Errorf("alarm-b readiness: %w", readyErr)
-	}
 
 	// --- Start adhd headless ------------------------------------------------
 	smokeAlarmURL := fmt.Sprintf("http://0.0.0.0:%d", portA)
