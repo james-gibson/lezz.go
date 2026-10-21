@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +11,15 @@ import (
 	"strings"
 
 	"github.com/creativeprojects/go-selfupdate"
+
+	"github.com/james-gibson/lezz.go/internal/githubauth"
 )
+
+// ErrNoReleaseAsset means the repository publishes nothing this platform can
+// download — no releases at all, or none with a matching asset. It is the only
+// outcome Install may answer by building from source: an API error is not the
+// same thing and must reach the user (james-gibson/lezz.go#36).
+var ErrNoReleaseAsset = errors.New("no release asset for this platform")
 
 // releaseFetcher is the minimal surface installViaRelease needs.
 // The real implementation calls GitHub; tests swap in a fileFetcher.
@@ -25,17 +34,26 @@ type ghReleaseFetcher struct {
 	config selfupdate.Config
 }
 
-func (f *ghReleaseFetcher) FetchLatest(ctx context.Context, dest string) (string, error) {
+func (f *ghReleaseFetcher) FetchLatest(ctx context.Context, dest string) (version string, err error) {
 	// update.Apply (used internally by UpdateTo) requires the target file to exist
 	// so it can atomically rename old → .old and new → target.  Create an empty
 	// placeholder on a fresh install so the rename does not fail with ENOENT.
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
+	placeholder := false
+	if _, statErr := os.Stat(dest); os.IsNotExist(statErr) {
 		if wErr := os.WriteFile(dest, []byte{}, 0o600); wErr != nil {
 			return "", fmt.Errorf("create install placeholder: %w", wErr)
 		}
+		placeholder = true
+		// A failed download must not leave a 0-byte "binary" in ~/.lezz/bin,
+		// where lezz would later try to run it.
+		defer func() {
+			if placeholder && err != nil {
+				_ = os.Remove(dest)
+			}
+		}()
 	}
 
-	updater, err := selfupdate.NewUpdater(f.config)
+	updater, err := githubauth.ReleaseUpdater(f.config)
 	if err != nil {
 		return "", fmt.Errorf("create updater: %w", err)
 	}
@@ -45,7 +63,7 @@ func (f *ghReleaseFetcher) FetchLatest(ctx context.Context, dest string) (string
 		return "", fmt.Errorf("detect latest release for %s: %w", f.slug, err)
 	}
 	if !found {
-		return "", fmt.Errorf("no releases found for %s", f.slug)
+		return "", fmt.Errorf("%w: no releases found for %s", ErrNoReleaseAsset, f.slug)
 	}
 
 	if err := updater.UpdateTo(ctx, release, dest); err != nil {
@@ -89,7 +107,12 @@ func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (version strin
 //
 // Strategy selection:
 //  1. Download the pre-built GitHub release asset (same source as `lezz update`).
-//  2. If no release is found and Go is available, fall back to go install.
+//  2. Only when that repository publishes no asset for this platform, and Go is
+//     available, fall back to go install.
+//
+// An API failure (401, 403, rate limit, network) is reported, never converted
+// into a quiet source build: a stale $GITHUB_TOKEN used to make every install
+// fall through to `go install` and report "latest" (james-gibson/lezz.go#36).
 func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	binDir, err := BinDir()
 	if err != nil {
@@ -98,16 +121,35 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	if mkErr := os.MkdirAll(binDir, 0o750); mkErr != nil {
 		return "", fmt.Errorf("create bin dir: %w", mkErr)
 	}
+	return installInto(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool, binDir)
+}
 
-	ver, err = installViaFetcher(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool.Name, binDir)
-	if err == nil {
+// installInto is the testable core of Install: fetch from fetcher, and fall back
+// to a source build only when there is genuinely no asset to fetch.
+func installInto(ctx context.Context, fetcher releaseFetcher, tool Tool, binDir string) (string, error) {
+	ver, err := installViaFetcher(ctx, fetcher, tool.Name, binDir)
+	switch {
+	case err == nil:
 		return ver, nil
+	case errors.Is(err, ErrNoReleaseAsset):
+		if _, goErr := exec.LookPath("go"); goErr == nil {
+			return installViaGoInstall(ctx, tool, binDir)
+		}
+		return "", err
+	default:
+		return "", authHint(err)
 	}
+}
 
-	if _, goErr := exec.LookPath("go"); goErr == nil {
-		return installViaGoInstall(ctx, tool, binDir)
+// authHint appends the one action that fixes a rejected credential.
+func authHint(err error) error {
+	msg := strings.ToLower(err.Error())
+	for _, signal := range []string{"401", "403", "bad credentials", "rate limit"} {
+		if strings.Contains(msg, signal) {
+			return fmt.Errorf("%w\n  hint: run `lezz auth github` so downloads use your GitHub account", err)
+		}
 	}
-	return "", err
+	return err
 }
 
 // installViaGoInstall runs `go install <slug>/cmd/<name>@latest` and symlinks
@@ -122,7 +164,39 @@ func installViaGoInstall(ctx context.Context, tool Tool, binDir string) (string,
 		return "", fmt.Errorf("go install %s: %w", module, err)
 	}
 
-	return linkFromGOPATH(ctx, tool.Name, binDir)
+	if _, err := linkFromGOPATH(ctx, tool.Name, binDir); err != nil {
+		return "", err
+	}
+
+	// A source build has a module version in its build info; report it so
+	// "installed adhd latest" cannot be mistaken for a release artifact.
+	if ver := moduleVersion(ctx, filepath.Join(binDir, tool.Name)); ver != "" {
+		return ver, nil
+	}
+	return "latest (from source)", nil
+}
+
+// moduleVersion reads the main module version from a binary's build info:
+//
+//	mod	github.com/james-gibson/adhd	v0.8.6	h1:...
+//
+// It returns "" when the binary carries no module version (a `go build` inside
+// a checkout records "(devel)" or nothing usable).
+func moduleVersion(ctx context.Context, path string) string {
+	//nolint:gosec // G204: path is ~/.lezz/bin/<name>, a managed binary
+	out, err := exec.CommandContext(ctx, "go", "version", "-m", path).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "mod" {
+			if v := fields[2]; strings.HasPrefix(v, "v") && strings.Count(v, ".") >= 2 {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // linkFromGOPATH reads GOPATH via `go env`, finds the binary there, and

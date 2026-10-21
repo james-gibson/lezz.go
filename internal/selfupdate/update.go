@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/creativeprojects/go-selfupdate"
+
+	"github.com/james-gibson/lezz.go/internal/githubauth"
 )
 
 const slug = "james-gibson/lezz.go"
@@ -55,17 +57,11 @@ func isAllDigits(s string) bool {
 	return s != ""
 }
 
-// newUpdater creates an unauthenticated updater for public GitHub repos.
-// go-selfupdate inherits $GITHUB_TOKEN from the environment when no token is
-// configured; a stale or unrelated token causes 401 on public repos, so we
-// clear it before constructing the updater.
+// newUpdater creates the updater for lezz's own releases. The credential comes
+// from githubauth (the OAuth-app token from `lezz auth github`, or anonymous);
+// an ambient $GITHUB_TOKEN is never inherited — see james-gibson/lezz.go#36.
 func newUpdater() (*selfupdate.Updater, error) {
-	old, had := os.LookupEnv("GITHUB_TOKEN")
-	if had {
-		_ = os.Unsetenv("GITHUB_TOKEN")
-		defer func() { _ = os.Setenv("GITHUB_TOKEN", old) }()
-	}
-	return selfupdate.NewUpdater(selfupdate.Config{})
+	return githubauth.ReleaseUpdater(selfupdate.Config{})
 }
 
 // Check returns the latest available version string without applying it.

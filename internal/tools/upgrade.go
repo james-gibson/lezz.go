@@ -12,6 +12,8 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/creativeprojects/go-selfupdate"
+
+	"github.com/james-gibson/lezz.go/internal/githubauth"
 )
 
 // UpgradeResult reports what upgrading one tool did. Err is set per tool so a
@@ -71,7 +73,7 @@ func (f *ghReleaseFetcher) LatestVersion(ctx context.Context) (string, error) {
 
 // latestRelease builds an updater and detects the tool's newest release.
 func (f *ghReleaseFetcher) latestRelease(ctx context.Context) (*selfupdate.Updater, *selfupdate.Release, error) {
-	updater, err := selfupdate.NewUpdater(f.config)
+	updater, err := githubauth.ReleaseUpdater(f.config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create updater: %w", err)
 	}
