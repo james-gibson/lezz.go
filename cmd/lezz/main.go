@@ -129,6 +129,10 @@ func main() {
 		cmdInstall(ctx)
 		cancel()
 
+	case "tools":
+		cmdTools(ctx)
+		cancel()
+
 	case "update":
 		cmdUpdate(ctx)
 		cancel()
@@ -650,30 +654,107 @@ func cmdInstall(ctx context.Context) {
 }
 
 // lezz update
+//
+// lezz itself is self-updated from its own releases; every other managed tool
+// is version-checked against its latest GitHub release and reinstalled when it
+// is older. A failure in one half does not silently cancel the other: both are
+// attempted and the exit status reflects any failure.
 func cmdUpdate(ctx context.Context) {
 	if helpOnly("update", os.Args[2:]) {
 		return
 	}
+	if err := noArguments("update", os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "update:", err)
+		fmt.Fprintln(os.Stderr, "to upgrade one tool: lezz tools upgrade <tool>")
+		os.Exit(2)
+	}
 	fmt.Printf("lezz %s — checking for updates...\n", version())
+	ok := true
 
 	latest, hasUpdate, err := selfupdate.Check(ctx, version())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "update check failed:", err)
-		os.Exit(1)
+	switch {
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "lezz update check failed:", err)
+		ok = false
+	case !hasUpdate:
+		fmt.Printf("lezz already up to date (%s)\n", version())
+	default:
+		fmt.Printf("new lezz version available: %s → applying...\n", latest)
+		applied, applyErr := selfupdate.Apply(ctx, version())
+		if applyErr != nil {
+			fmt.Fprintln(os.Stderr, "lezz update failed:", applyErr)
+			ok = false
+		} else {
+			fmt.Printf("updated lezz to %s — restart lezz to use the new version\n", applied)
+		}
 	}
 
-	if !hasUpdate {
-		fmt.Printf("already up to date (%s)\n", version())
+	fmt.Println("\nmanaged tools:")
+	if !upgradeManagedTools(ctx, nil) {
+		ok = false
+	}
+
+	if !ok {
+		os.Exit(1)
+	}
+}
+
+// lezz tools upgrade [tool...]
+func cmdTools(ctx context.Context) {
+	if helpOnly("tools", os.Args[2:]) {
 		return
 	}
-
-	fmt.Printf("new version available: %s → applying...\n", latest)
-	applied, err := selfupdate.Apply(ctx, version())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "update failed:", err)
+	if len(os.Args) < 3 {
+		printCommandUsage(os.Stderr, "tools", nil)
 		os.Exit(1)
 	}
-	fmt.Printf("updated to %s — restart lezz to use the new version\n", applied)
+
+	switch action := os.Args[2]; action {
+	case "upgrade":
+		if helpOnly("tools upgrade", os.Args[3:]) {
+			return
+		}
+		names := os.Args[3:]
+		if len(names) == 0 {
+			fmt.Println("checking managed tools for updates...")
+		}
+		if !upgradeManagedTools(ctx, names) {
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown tools action %q; use upgrade\n", action)
+		os.Exit(1)
+	}
+}
+
+// upgradeManagedTools version-checks the named tools (all non-lezz managed
+// tools when names is empty) and reinstalls any that are older than their latest
+// release. It returns false when any tool failed.
+func upgradeManagedTools(ctx context.Context, names []string) bool {
+	results, err := tools.UpgradeAll(ctx, names)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tools upgrade:", err)
+		return false
+	}
+
+	ok := true
+	for i := range results {
+		r := &results[i]
+		switch {
+		case r.Err != nil:
+			fmt.Fprintf(os.Stderr, "  %-16s failed: %v\n", r.Tool.Name, r.Err)
+			ok = false
+		case r.Changed:
+			from := r.Installed
+			if from == "" {
+				from = r.Note
+			}
+			fmt.Printf("  %-16s %s → %s\n", r.Tool.Name, from, r.Latest)
+		default:
+			fmt.Printf("  %-16s up to date (%s)\n", r.Tool.Name, r.Latest)
+		}
+	}
+	return ok
 }
 
 // lezz start <tool> [args...]
@@ -1775,8 +1856,10 @@ var commandDocs = []commandDoc{
 	{"run", "lezz run <tool> [args...]", "Replace lezz with the tool (exec)", true},
 	{"start", "lezz start <tool> [args...]", "Spawn the tool as a child process (wait)", true},
 	{"install", "lezz install <tool>", "Download and install a managed tool", true},
+	{"tools", "lezz tools upgrade [tool...]", "Upgrade managed tools to their latest GitHub releases", false},
+	{"tools upgrade", "lezz tools upgrade [tool...]", "Upgrade managed tools to their latest GitHub releases", true},
 	{"purge", "lezz purge", "Remove services, binaries, and Go caches for all managed tools", true},
-	{"update", "lezz update", "Check for and apply lezz self-update", true},
+	{"update", "lezz update", "Update lezz and all managed tools", true},
 	{"service", "lezz service install|remove|list|purge", "Configure launchd services for managed tools", false},
 	{"service install", "lezz service install <tool>", "Configure launchd service for a tool", true},
 	{"service remove", "lezz service remove <tool>", "Remove daemon config for a tool", true},
