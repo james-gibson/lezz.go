@@ -738,7 +738,8 @@ func upgradeManagedTools(ctx context.Context, names []string) bool {
 	}
 
 	ok := true
-	for _, r := range results {
+	for i := range results {
+		r := &results[i]
 		switch {
 		case r.Err != nil:
 			fmt.Fprintf(os.Stderr, "  %-16s failed: %v\n", r.Tool.Name, r.Err)

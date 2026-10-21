@@ -21,7 +21,7 @@ type UpgradeResult struct {
 	Installed string // comparable version before the upgrade; "" if unknown/uninstalled
 	Latest    string // latest release version (or the version actually installed)
 	Changed   bool   // true when a download replaced the binary
-	Note      string // why Installed is empty: "not installed", "unrecognised version"
+	Note      string // why Installed is empty: "not installed", "unrecognized version"
 	Err       error
 }
 
@@ -165,7 +165,7 @@ func upgradeInto(ctx context.Context, tool Tool, rm releaseManager, binDir strin
 	case !ok:
 		result.Note = "not installed"
 	case installed == "":
-		result.Note = "unrecognised version"
+		result.Note = "unrecognized version"
 	default:
 		newer, cmpErr := releaseIsNewer(latest, installed)
 		if cmpErr != nil {

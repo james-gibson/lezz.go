@@ -221,8 +221,8 @@ func TestUpgradeInto_ReinstallsUnrecognisedBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgradeInto: %v", err)
 	}
-	if !res.Changed || res.Note != "unrecognised version" {
-		t.Errorf("unrecognised build: Changed=%v Note=%q", res.Changed, res.Note)
+	if !res.Changed || res.Note != "unrecognized version" {
+		t.Errorf("unrecognized build: Changed=%v Note=%q", res.Changed, res.Note)
 	}
 }
 
