@@ -9,7 +9,13 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------------
+  # 1. Binaries. Goreleaser builds and archives every advertised target but does
+  #    not publish: releases here are immutable, so there must be exactly one
+  #    job that creates a release, and it must have every asset in hand.
+  # ---------------------------------------------------------------------------
+  binaries:
+    name: Binaries
     runs-on: ubuntu-latest
     env:
       LEZZ_GITHUB_CLIENT_ID: ${{ vars.LEZZ_GITHUB_CLIENT_ID }}
@@ -31,9 +37,107 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - uses: goreleaser/goreleaser-action@v6
+      - name: Build release archives
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          args: release --clean --skip=publish
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2. Images and the OTA package, built by the reusable workflow. Dispatch that
+  #    workflow on its own for a full dry run that publishes nothing.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Images and OTA
+    uses: ./.github/workflows/release-ota.yml
+    with:
+      environment: ${{ github.ref_name }}
+
+  # ---------------------------------------------------------------------------
+  # 3. One publisher. Downloads every artifact from this run and creates the
+  #    release once, so no two jobs race to create it.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish release
+    needs: [binaries, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -l dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Binaries, lab images, and an OTA package
+
+            **Environment:** `${{ github.ref_name }}`
+
+            Two images come out of the same layer and differ only by config:
+
+            | Asset | Boots into |
+            | --- | --- |
+            | `lezz-rpi3.img` | an idle base image — `lezz` is installed, nothing runs |
+            | `lezz-rpi3-auto.img` | `lezz auto` as a systemd service: a base cluster, empty and awaiting peers |
+
+            The alarms are not baked into either image: `lezz install <tool>` fetches
+            them from their own ARM64 releases.
+
+            `aptupgrade.tar.zst` is the Raspberry Pi Connect OTA package.
+
+            ### Install on a Raspberry Pi
+
+            1. One-time setup on the target Pi:
+               ```bash
+               # Standard Raspberry Pi OS
+               sudo apt update
+               sudo apt install rpi-connect rpi-connect-ota
+               # Raspberry Pi OS Lite
+               sudo apt install rpi-connect-lite rpi-connect-ota
+               ```
+            2. Enable the service:
+               ```bash
+               rpi-connect ota on
+               ```
+            3. Deploy via Raspberry Pi Connect using the asset URL, and verify it
+               against the SHA256 in `aptupgrade.tar.zst.sha256sum`.
+
+      - name: Print install instructions
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## How to install this release
+
+          ### 1. Flash an image
+          Use Raspberry Pi Imager and select one of the `.img` assets:
+          - `lezz-rpi3.img` — idle base image
+          - `lezz-rpi3-auto.img` — boots into `lezz auto`
+
+          ### 2. Or update a running device over OTA
+          One-time setup:
+          ```bash
+          sudo apt update
+          sudo apt install rpi-connect rpi-connect-ota   # or rpi-connect-lite
+          rpi-connect ota on
+          ```
+          Then deploy `aptupgrade.tar.zst` through Raspberry Pi Connect and verify
+          its SHA256 against `aptupgrade.tar.zst.sha256sum`.
+          EOF
