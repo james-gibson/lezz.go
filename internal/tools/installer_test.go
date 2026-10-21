@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -244,6 +245,77 @@ func TestGHReleaseFetcher_NoReleasesFound(t *testing.T) {
 	}
 }
 
+// TestGHReleaseFetcher_NoReleasesIsNoAsset establishes the only condition that
+// may become a source build: a repository with nothing to download.
+func TestGHReleaseFetcher_NoReleasesIsNoAsset(t *testing.T) {
+	fetcher := &ghReleaseFetcher{
+		slug:   "testowner/emptytool",
+		config: selfupdate.Config{Source: &mockReleaseSource{}},
+	}
+
+	_, err := installViaFetcher(context.Background(), fetcher, "emptytool", t.TempDir())
+	if !errors.Is(err, ErrNoReleaseAsset) {
+		t.Fatalf("err = %v, want ErrNoReleaseAsset", err)
+	}
+}
+
+// TestGHReleaseFetcher_APIErrorIsNotNoAsset is the #36 regression: a rejected
+// credential must not look like "this tool has no release", because Install used
+// to answer that with `go install` and report "latest".
+func TestGHReleaseFetcher_APIErrorIsNotNoAsset(t *testing.T) {
+	fetcher := &ghReleaseFetcher{
+		slug: "testowner/fakerepo",
+		config: selfupdate.Config{Source: &mockReleaseSource{
+			listErr: errors.New("GET https://api.github.com/repos/testowner/fakerepo/releases: 401 Bad credentials []"),
+		}},
+	}
+
+	_, err := installViaFetcher(context.Background(), fetcher, "fakerepo", t.TempDir())
+	if err == nil {
+		t.Fatal("expected the API error to surface, got nil")
+	}
+	if errors.Is(err, ErrNoReleaseAsset) {
+		t.Error("an API error was classified as a missing asset, so Install would silently build from source")
+	}
+}
+
+// TestInstallInto_DoesNotFallBackOnAPIError drives the decision itself: the
+// fetcher fails with an auth error, so installInto must return it rather than
+// reaching for the toolchain.
+func TestInstallInto_DoesNotFallBackOnAPIError(t *testing.T) {
+	binDir := t.TempDir()
+	tool := Tool{Name: "fakerepo", GithubSlug: "testowner/fakerepo"}
+	fetcher := &ghReleaseFetcher{
+		slug: "testowner/fakerepo",
+		config: selfupdate.Config{Source: &mockReleaseSource{
+			listErr: errors.New("GET https://api.github.com/repos/testowner/fakerepo/releases: 401 Bad credentials []"),
+		}},
+	}
+
+	_, err := installInto(context.Background(), fetcher, tool, binDir)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "lezz auth github") {
+		t.Errorf("error should point at `lezz auth github`: %q", err.Error())
+	}
+	if _, statErr := os.Stat(filepath.Join(binDir, "fakerepo")); statErr == nil {
+		t.Error("a binary was installed anyway")
+	}
+}
+
+// TestModuleVersion_NonGoBinary returns "" rather than garbage for a file with
+// no build info.
+func TestModuleVersion_NonGoBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notgo")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := moduleVersion(context.Background(), path); got != "" {
+		t.Errorf("moduleVersion = %q, want empty", got)
+	}
+}
+
 // ---- mock Source / SourceRelease / SourceAsset types -------------------------
 
 // mockReleaseSource implements selfupdate.Source.
@@ -252,9 +324,13 @@ type mockReleaseSource struct {
 	tagName    string // e.g. "v1.5.0"; empty → no releases
 	assetName  string // e.g. "fakerepo_linux_amd64"
 	assetBytes []byte
+	listErr    error // simulates an API failure (401, rate limit, network)
 }
 
 func (s *mockReleaseSource) ListReleases(_ context.Context, _ selfupdate.Repository) ([]selfupdate.SourceRelease, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	if s.tagName == "" {
 		return nil, nil
 	}
