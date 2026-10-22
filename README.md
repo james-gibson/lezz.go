@@ -128,6 +128,25 @@ lezz service list
 # Logs land in ~/.lezz/logs/co.james-gibson.lab.<tool>.<profile>.{log,err}
 ```
 
+A profile that names an MCP address is **probed before its plist is written**.
+`adhd` logs a failed bind as a warning and keeps running, so a service installed
+over a taken port would be green in `lezz service list` while exposing no MCP
+server; the install therefore refuses, and names the owner and the fix:
+
+```sh
+lezz service install adhd idle
+# service install failed: refusing to install a service whose MCP port is in use:
+#   127.0.0.1:9090 is held by PID 1202 (adhd); stop it or choose another --mcp-addr,
+#   or pass --force to install anyway
+
+lezz service install --force adhd idle   # deliberate shared-port override
+```
+
+The probe is fail-closed only on a proven conflict: when the address cannot be
+probed (not local to this host, unparseable, no permission), the install goes
+ahead with a warning on stderr. A port held by the currently installed instance
+of the same service is expected — the install reloads it.
+
 ---
 
 ## lezz demo

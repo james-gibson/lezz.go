@@ -967,10 +967,23 @@ func cmdService() {
 		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove <tool> [profile]")
 		os.Exit(1)
 	}
-	toolName := os.Args[3]
+	positional, force := takeFlag(os.Args[3:], "--force")
+	if force && action != "install" {
+		fmt.Fprintln(os.Stderr, "--force is only meaningful for `lezz service install`")
+		os.Exit(2)
+	}
+	if len(positional) < 1 {
+		if action == "install" {
+			fmt.Fprintln(os.Stderr, "usage: lezz service install [--force] <tool> [profile]")
+		} else {
+			fmt.Fprintln(os.Stderr, "usage: lezz service remove <tool> [profile]")
+		}
+		os.Exit(1)
+	}
+	toolName := positional[0]
 	profileName := "idle"
-	if len(os.Args) >= 5 {
-		profileName = os.Args[4]
+	if len(positional) >= 2 {
+		profileName = positional[1]
 	}
 
 	t, ok := tools.Lookup(toolName)
@@ -1001,7 +1014,11 @@ func cmdService() {
 			fmt.Fprintf(os.Stderr, "%s is not installed — run: lezz install %s\n", t.Name, t.Name)
 			os.Exit(1)
 		}
-		if err := service.Install(t, p, binPath); err != nil {
+		notes, err := service.Install(t, p, binPath, force)
+		for _, note := range notes {
+			fmt.Fprintf(os.Stderr, "service install: %s\n", note)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "service install failed:", err)
 			os.Exit(1)
 		}
@@ -2024,6 +2041,22 @@ func noArguments(path string, args []string) error {
 	return fmt.Errorf("unexpected argument %q; lezz %s takes no arguments (try lezz %s --help)", args[0], path, path)
 }
 
+// takeFlag removes name (or its single-dash spelling) from args and reports
+// whether it was there. `lezz service` takes positionals only, so --force may
+// appear anywhere among them.
+func takeFlag(args []string, name string) (rest []string, found bool) {
+	rest = make([]string, 0, len(args))
+	short := "-" + strings.TrimLeft(name, "-")
+	for _, a := range args {
+		if a == name || a == short {
+			found = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, found
+}
+
 // commandDoc is one row of the command table. usage() and `lezz <cmd> --help`
 // both read it, so the two cannot describe a command differently.
 type commandDoc struct {
@@ -2073,7 +2106,7 @@ var commandDocs = []commandDoc{
 	{"purge", "lezz purge", "Remove services, binaries, and Go caches for all managed tools", true},
 	{"update", "lezz update", "Update lezz and all managed tools", true},
 	{"service", "lezz service install|remove|list|purge", "Configure launchd services for managed tools", false},
-	{"service install", "lezz service install <tool>", "Configure launchd service for a tool", true},
+	{"service install", "lezz service install [--force] <tool> [profile]", "Install a launchd service for a tool, refusing a port another process owns", true},
 	{"service remove", "lezz service remove <tool>", "Remove daemon config for a tool", true},
 	{"service list", "lezz service list", "List all installed lezz services", true},
 	{"service purge", "lezz service purge", "Unload and remove all lezz services", true},
