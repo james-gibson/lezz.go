@@ -165,6 +165,17 @@ own lifecycle, and the facade is smoke-alarm only.
 
 On startup it prints a cluster summary including isotope trust levels from `/isotope/list`.
 
+The installed `adhd` is **probed before it is started**: a build that does not
+accept the demo's command line is reported at once, with adhd's own message and
+the upgrade that fixes it, instead of surfacing as a readiness timeout later. A
+build that predates the advertise-guard override (`--force`, adhd#15) is started
+without it and says so — that release has no guard to override.
+
+A child that dies during startup fails the demo immediately rather than after
+the timeout, and the error carries the tail of its log. The full log is copied
+to `~/.lezz/logs/demo-<service>.log` before the demo's temp root is removed, so
+the cause outlives the process that produced it.
+
 ### Lifecycle
 
 `lezz demo` runs in the foreground. To leave the cluster running:
