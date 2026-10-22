@@ -403,11 +403,11 @@ func RunAuto(ctx context.Context) error {
 	// --- Poll alarm readiness -----------------------------------------------
 	fmt.Println("waiting for alarm-a to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portA)); readyErr != nil {
-		return fmt.Errorf("alarm-a readiness: %w\n--- %s ---\n%s", readyErr, alarmALogPath, tailFile(alarmALogPath, 20))
+		return readinessError("alarm-a", readyErr, alarmALogPath)
 	}
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portB)); readyErr != nil {
-		return fmt.Errorf("alarm-b readiness: %w\n--- %s ---\n%s", readyErr, alarmBLogPath, tailFile(alarmBLogPath, 20))
+		return readinessError("alarm-b", readyErr, alarmBLogPath)
 	}
 
 	host := outboundIP()
@@ -457,7 +457,7 @@ func RunAuto(ctx context.Context) error {
 	// No hardcoded config: adhd builds its smoke_alarm endpoints from whatever
 	// the registry advertises, and keeps polling for clusters that join later.
 	smokeAlarmURL := fmt.Sprintf("http://0.0.0.0:%d", portA)
-	cmdADHD, err := startProcess("adhd", []string{
+	adhdBin, adhdArgs, adhdNotes, err := prepareADHD([]string{
 		"--headless",
 		"--demo",
 		"--log", adhdLogPath,
@@ -468,19 +468,27 @@ func RunAuto(ctx context.Context) error {
 		// register/advertise an unguarded endpoint, because that names an
 		// unauthenticated MCP surface to the LAN (see adhd#15). --force is the
 		// operator stating that override out loud for the demo.
-		"--force",
-	}, adhdLogPath)
+		adhdForce,
+	})
+	if err != nil {
+		return fmt.Errorf("start adhd: %w", err)
+	}
+	for _, note := range adhdNotes {
+		fmt.Printf("adhd: %s\n", note)
+	}
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
 	defer killProcess(cmdADHD)
+	adhdExited := watchExit(cmdADHD)
 
 	// --- Poll adhd MCP readiness --------------------------------------------
 	// GET /mcp is an SSE endpoint that never closes, so HTTP-based readiness
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
-	if readyErr := waitPortOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort)); readyErr != nil {
-		return fmt.Errorf("adhd MCP readiness: %w", readyErr)
+	if readyErr := waitServiceOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort), adhdExited); readyErr != nil {
+		return readinessError("adhd MCP", readyErr, adhdLogPath)
 	}
 
 	// Tell our own ADHD about this cluster so it registers the cluster peer and

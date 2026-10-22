@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"text/template"
 	"time"
@@ -27,7 +28,12 @@ func startProcess(name string, args []string, logFile string) (*exec.Cmd, error)
 	if err != nil {
 		return nil, err
 	}
+	return startBinary(binary, args, logFile)
+}
 
+// startBinary is startProcess for a binary that has already been resolved, so
+// the process that runs is the one that was checked.
+func startBinary(binary string, args []string, logFile string) (*exec.Cmd, error) {
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // logFile is constructed from a temp dir under our control
 	if err != nil {
 		return nil, fmt.Errorf("open log file %s: %w", logFile, err)
@@ -38,7 +44,7 @@ func startProcess(name string, args []string, logFile string) (*exec.Cmd, error)
 	cmd.Stderr = f
 	if err := cmd.Start(); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("start %s: %w", name, err)
+		return nil, fmt.Errorf("start %s: %w", filepath.Base(binary), err)
 	}
 	// Close our copy of the file descriptor — the child process holds its own.
 	_ = f.Close()
@@ -179,30 +185,6 @@ func waitReady(ctx context.Context, url string) error {
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-// waitPortOpen dials addr (host:port) repeatedly until a TCP connection
-// succeeds or the deadline is reached. Used for services whose HTTP endpoints
-// are not suitable for readiness polling (e.g. SSE streams that never close).
-func waitPortOpen(ctx context.Context, addr string) error {
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for %s to open", addr)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -454,11 +436,11 @@ func Run(ctx context.Context, opts Options) error {
 	// --- Poll alarm readiness -----------------------------------------------
 	fmt.Println("waiting for alarm-a to become ready...")
 	if readyErr := waitReady(ctx, linkA.healthURL()); readyErr != nil {
-		return fmt.Errorf("alarm-a readiness: %w", readyErr)
+		return readinessError("alarm-a", readyErr, alarmALogPath)
 	}
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, linkB.healthURL()); readyErr != nil {
-		return fmt.Errorf("alarm-b readiness: %w", readyErr)
+		return readinessError("alarm-b", readyErr, alarmBLogPath)
 	}
 
 	adhdConfigPath, err := writeTempConfig(tmpRoot, "adhd", adhdConfigTmpl, adhdConfig{
@@ -483,7 +465,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	// --- Start adhd headless ------------------------------------------------
 	smokeAlarmURL := fmt.Sprintf("http://0.0.0.0:%d", portA)
-	cmdADHD, err := startProcess("adhd", []string{
+	adhdBin, adhdArgs, adhdNotes, err := prepareADHD([]string{
 		"--headless",
 		"--config", adhdConfigPath,
 		"--log", adhdLogPath,
@@ -492,19 +474,27 @@ func Run(ctx context.Context, opts Options) error {
 		// Deliberate all-interfaces bind for LAN discovery; adhd's advertise
 		// guard otherwise refuses to register/advertise an unguarded endpoint
 		// (see adhd#15). --force states the override out loud for the demo.
-		"--force",
-	}, adhdLogPath)
+		adhdForce,
+	})
+	if err != nil {
+		return fmt.Errorf("start adhd: %w", err)
+	}
+	for _, note := range adhdNotes {
+		fmt.Printf("adhd: %s\n", note)
+	}
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
 	defer killProcess(cmdADHD)
+	adhdExited := watchExit(cmdADHD)
 
 	// --- Poll adhd MCP readiness --------------------------------------------
 	// GET /mcp is an SSE endpoint that never closes, so HTTP-based readiness
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
-	if readyErr := waitPortOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort)); readyErr != nil {
-		return fmt.Errorf("adhd MCP readiness: %w", readyErr)
+	if readyErr := waitServiceOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort), adhdExited); readyErr != nil {
+		return readinessError("adhd MCP", readyErr, adhdLogPath)
 	}
 
 	// --- Start discovery (fixed port + mDNS) --------------------------------
