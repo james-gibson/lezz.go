@@ -334,3 +334,21 @@ jobs:
       - name: Print install instructions
         run: cat release-body.md >> "$GITHUB_STEP_SUMMARY"
 
+  # ---------------------------------------------------------------------------
+  # 4. The site. Built from the same tag as the binaries, so the documentation
+  #    a reader lands on describes the release that shipped rather than
+  #    whatever main happens to be. It fails only this job: a site deploy
+  #    cannot un-publish a release that is already immutable.
+  # ---------------------------------------------------------------------------
+  site:
+    name: Publish site
+    needs: [prepare, publish]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      ref: ${{ needs.prepare.outputs.tag }}
+      version: ${{ needs.prepare.outputs.tag }}
+

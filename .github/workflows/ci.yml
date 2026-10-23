@@ -98,3 +98,41 @@ jobs:
         with:
           version: "~> v2"
           args: check
+
+  # The site only ever rendered at release time, so a broken template or a dead
+  # docs link would not be discovered until a tag was already public — and a
+  # release is immutable, so the fix costs another version. Same reasoning as
+  # release-config above: run the expensive-once thing on every pull request.
+  #
+  # The site is a separate module, so this also runs its tests, which the
+  # repository-wide `go test ./...` in build-lint-test does not reach.
+  site:
+    name: Build site
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: site/go.mod
+          cache: true
+          cache-dependency-path: site/go.sum
+
+      - name: Verify formatting (gofmt)
+        working-directory: site
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run tests
+        working-directory: site
+        run: go test ./...
+
+      - name: Render the site
+        working-directory: site
+        run: go run . -docs ../docs -out ../dist/site -base /lezz.go/ -version ci
