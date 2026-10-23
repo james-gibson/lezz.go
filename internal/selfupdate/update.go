@@ -61,7 +61,17 @@ func isAllDigits(s string) bool {
 // from githubauth (the OAuth-app token from `lezz auth github`, or anonymous);
 // an ambient $GITHUB_TOKEN is never inherited — see james-gibson/lezz.go#36.
 func newUpdater() (*selfupdate.Updater, error) {
-	return githubauth.ReleaseUpdater(selfupdate.Config{})
+	return githubauth.ReleaseUpdater(updaterConfig())
+}
+
+// updaterConfig makes the release's checksums.txt mandatory.
+// go-selfupdate validates a download only when a validator is configured
+// (update.go: `if up.validator != nil`), so an empty Config meant that an
+// update replaced this binary with bytes nobody had checked.
+func updaterConfig() selfupdate.Config {
+	return selfupdate.Config{
+		Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
+	}
 }
 
 // Check returns the latest available version string without applying it.

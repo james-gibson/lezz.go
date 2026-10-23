@@ -21,6 +21,28 @@ import (
 // same thing and must reach the user (james-gibson/lezz.go#36).
 var ErrNoReleaseAsset = errors.New("no release asset for this platform")
 
+// checksumConfig makes the release's checksums.txt mandatory. go-selfupdate
+// validates a download only when a validator is configured (update.go:
+// `if up.validator != nil`), so the zero value used to mean "verify nothing";
+// a release without checksums.txt now fails detection rather than installing
+// unchecked bytes.
+func checksumConfig() selfupdate.Config {
+	return selfupdate.Config{Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"}}
+}
+
+// sourceInstallAllowed reports whether the unpinned `go install @latest`
+// fallback may run. It is off by default: that path bypasses the release
+// checksum and the signature, and it builds whatever upstream main happens to
+// be at that moment.
+func sourceInstallAllowed() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEZZ_ALLOW_SOURCE_INSTALL"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 // releaseFetcher is the minimal surface installViaRelease needs.
 // The real implementation calls GitHub; tests swap in a fileFetcher.
 type releaseFetcher interface {
@@ -106,9 +128,11 @@ func (f *fileFetcher) FetchLatest(_ context.Context, dest string) (version strin
 // Install places the tool binary in ~/.lezz/bin/<name>.
 //
 // Strategy selection:
-//  1. Download the pre-built GitHub release asset (same source as `lezz update`).
-//  2. Only when that repository publishes no asset for this platform, and Go is
-//     available, fall back to go install.
+//  1. Download the pre-built GitHub release asset, verified against the
+//     release's checksums.txt (same source as `lezz update`).
+//  2. Only when that repository publishes no asset for this platform, Go is
+//     available, and LEZZ_ALLOW_SOURCE_INSTALL=1, build with go install. That
+//     path is unpinned and unverified, so it is never silent.
 //
 // An API failure (401, 403, rate limit, network) is reported, never converted
 // into a quiet source build: a stale $GITHUB_TOKEN used to make every install
@@ -121,7 +145,7 @@ func Install(ctx context.Context, tool Tool) (ver string, err error) {
 	if mkErr := os.MkdirAll(binDir, 0o750); mkErr != nil {
 		return "", fmt.Errorf("create bin dir: %w", mkErr)
 	}
-	return installInto(ctx, &ghReleaseFetcher{slug: tool.GithubSlug}, tool, binDir)
+	return installInto(ctx, &ghReleaseFetcher{slug: tool.GithubSlug, config: checksumConfig()}, tool, binDir)
 }
 
 // installInto is the testable core of Install: fetch from fetcher, and fall back
@@ -130,12 +154,15 @@ func installInto(ctx context.Context, fetcher releaseFetcher, tool Tool, binDir 
 	ver, err := installViaFetcher(ctx, fetcher, tool.Name, binDir)
 	switch {
 	case err == nil:
+		if sigErr := verifyInstalledBinary(ctx, filepath.Join(binDir, tool.Name), defaultWarn); sigErr != nil {
+			return "", sigErr
+		}
 		return ver, nil
 	case errors.Is(err, ErrNoReleaseAsset):
-		if _, goErr := exec.LookPath("go"); goErr == nil {
+		if _, goErr := exec.LookPath("go"); goErr == nil && sourceInstallAllowed() {
 			return installViaGoInstall(ctx, tool, binDir)
 		}
-		return "", err
+		return "", fmt.Errorf("%w\n  note: a source build is available with LEZZ_ALLOW_SOURCE_INSTALL=1, but it is unpinned and unverified", err)
 	default:
 		return "", authHint(err)
 	}
@@ -153,7 +180,9 @@ func authHint(err error) error {
 }
 
 // installViaGoInstall runs `go install <slug>/cmd/<name>@latest` and symlinks
-// the result into binDir so lezz run finds it without PATH gymnastics.
+// the result into binDir so lezz run finds it without PATH gymnastics. It is
+// reached only through sourceInstallAllowed; nothing here verifies a checksum
+// or a signature, because there is nothing published to verify against.
 func installViaGoInstall(ctx context.Context, tool Tool, binDir string) (string, error) {
 	module := "github.com/" + tool.GithubSlug + "/cmd/" + tool.Name + "@latest"
 
