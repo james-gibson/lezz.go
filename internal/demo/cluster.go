@@ -23,6 +23,13 @@ import (
 // redirected to logFile. Unlike tools.Start, the terminal is not polluted by
 // child process output (TUI escape codes, color sequences, etc.).
 func startProcess(name string, args []string, logFile string) (*exec.Cmd, error) {
+	return startProcessEnv(name, args, logFile, nil)
+}
+
+// startProcessEnv is startProcess with a transient environment applied to the
+// child. The variables last for that process's lifetime, which for a
+// generation is exactly the scope a skill is supposed to have.
+func startProcessEnv(name string, args []string, logFile string, env []string) (*exec.Cmd, error) {
 	binary, err := tools.Find(name)
 	if err != nil {
 		return nil, err
@@ -34,6 +41,9 @@ func startProcess(name string, args []string, logFile string) (*exec.Cmd, error)
 	}
 
 	cmd := exec.Command(binary, args...) //nolint:gosec // binary path is resolved via tools.Find()
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = f
 	cmd.Stderr = f
 	if err := cmd.Start(); err != nil {

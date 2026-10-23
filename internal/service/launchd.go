@@ -34,6 +34,13 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{.Home}}</string>
+		<key>PATH</key>
+		<string>{{.Path}}</string>
+	</dict>
 	<key>StandardOutPath</key>
 	<string>{{.LogDir}}/{{.Label}}.log</string>
 	<key>StandardErrorPath</key>
@@ -47,45 +54,28 @@ type plistData struct {
 	BinPath string
 	Args    []string
 	LogDir  string
+	Home    string
+	Path    string
 }
 
 // Install writes the launchd plist and loads it so the service starts immediately.
 func Install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("service install is only supported on macOS (got %s)", runtime.GOOS)
-	}
+	return InstallArgs(t.Name, p.Name, binPath, p.Args)
+}
 
-	plistDir, err := launchAgentsDir()
+// InstallArgs is Install with the program arguments supplied at call time
+// instead of taken from a static DaemonProfile. Commands whose arguments are
+// only known at runtime use it — `lezz prod` installs its next generation with
+// the isotope and base port the current one is running with.
+func InstallArgs(toolName, profileName, binPath string, args []string) error {
+	label := fmt.Sprintf(launchdLabel, toolName, profileName)
+	return installLabel(label, binPath, args)
+}
+
+func installLabel(label, binPath string, args []string) error {
+	plistPath, err := writePlist(label, binPath, args)
 	if err != nil {
 		return err
-	}
-
-	logDir, err := logDir()
-	if err != nil {
-		return err
-	}
-
-	label := fmt.Sprintf(launchdLabel, t.Name, p.Name)
-	plistPath := filepath.Join(plistDir, label+".plist")
-
-	tmpl, err := template.New("plist").Parse(plistTemplate)
-	if err != nil {
-		return fmt.Errorf("parse plist template: %w", err)
-	}
-
-	f, err := os.OpenFile(plistPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is derived from os.UserHomeDir + a fixed subdirectory
-	if err != nil {
-		return fmt.Errorf("create plist %s: %w", plistPath, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if err := tmpl.Execute(f, plistData{
-		Label:   label,
-		BinPath: binPath,
-		Args:    p.Args,
-		LogDir:  logDir,
-	}); err != nil {
-		return fmt.Errorf("write plist: %w", err)
 	}
 
 	// Unload first in case a previous version is running, ignore errors.
@@ -98,8 +88,59 @@ func Install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
 	return nil
 }
 
+// writePlist renders and writes the launchd definition without loading it.
+// It is separate from installLabel so the generated arguments can be inspected
+// without starting a service.
+func writePlist(label, binPath string, args []string) (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", fmt.Errorf("service install is only supported on macOS (got %s)", runtime.GOOS)
+	}
+
+	plistDir, err := launchAgentsDir()
+	if err != nil {
+		return "", err
+	}
+
+	logDir, err := logDir()
+	if err != nil {
+		return "", err
+	}
+
+	plistPath := filepath.Join(plistDir, label+".plist")
+
+	tmpl, err := template.New("plist").Parse(plistTemplate)
+	if err != nil {
+		return "", fmt.Errorf("parse plist template: %w", err)
+	}
+
+	f, err := os.OpenFile(plistPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is derived from os.UserHomeDir + a fixed subdirectory
+	if err != nil {
+		return "", fmt.Errorf("create plist %s: %w", plistPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := tmpl.Execute(f, plistData{
+		Label:   label,
+		BinPath: binPath,
+		Args:    args,
+		LogDir:  logDir,
+		Home:    os.Getenv("HOME"),
+		Path:    servicePath(),
+	}); err != nil {
+		return "", fmt.Errorf("write plist: %w", err)
+	}
+
+	return plistPath, nil
+}
+
 // Remove unloads the service and deletes the plist.
 func Remove(t tools.Tool, p tools.DaemonProfile) error {
+	return RemoveArgs(t.Name, p.Name)
+}
+
+// RemoveArgs unloads and deletes a service whose profile name was chosen at
+// runtime (for example a numbered `lezz prod` generation).
+func RemoveArgs(toolName, profileName string) error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("service remove is only supported on macOS (got %s)", runtime.GOOS)
 	}
@@ -109,7 +150,7 @@ func Remove(t tools.Tool, p tools.DaemonProfile) error {
 		return err
 	}
 
-	label := fmt.Sprintf(launchdLabel, t.Name, p.Name)
+	label := fmt.Sprintf(launchdLabel, toolName, profileName)
 	plistPath := filepath.Join(plistDir, label+".plist")
 
 	if out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput(); err != nil { //nolint:gosec // plistPath is derived from trusted home dir
@@ -230,6 +271,24 @@ func launchAgentsDir() (string, error) {
 		return "", fmt.Errorf("create LaunchAgents dir: %w", err)
 	}
 	return dir, nil
+}
+
+// servicePath is the PATH a launchd job receives: the managed bin directory
+// first, then the installer's PATH. launchd's default PATH omits both, which
+// would make a managed tool invisible to the service.
+func servicePath() string {
+	path := os.Getenv("PATH")
+	binDir, err := tools.BinDir()
+	if err != nil || binDir == "" {
+		return path
+	}
+	if strings.Contains(path, binDir) {
+		return path
+	}
+	if path == "" {
+		return binDir
+	}
+	return binDir + string(os.PathListSeparator) + path
 }
 
 func logDir() (string, error) {
