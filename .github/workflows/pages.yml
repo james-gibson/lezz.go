@@ -1,0 +1,92 @@
+name: Publish site
+
+# Reusable publisher: the Release workflow calls it once a tag's binaries and
+# images are live, so the documentation a reader sees is the release that
+# shipped. It is also dispatchable on its own, because a typo in docs/ should
+# not require cutting a version to fix — the same split as release-ota.yml.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build the site from (tag, branch, or SHA).'
+        type: string
+        default: ''
+      version:
+        description: 'Version label shown in the footer.'
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (empty means the dispatched branch)'
+        default: ''
+      version:
+        description: 'Version label shown in the footer (empty means dev)'
+        default: ''
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. A release publishing while somebody dispatches a
+# docs fix must not interleave: Pages serves whatever was uploaded last.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          # The generator is its own module, so the CLI's dependency graph is
+          # untouched by anything the site needs.
+          go-version-file: site/go.mod
+          cache: true
+          cache-dependency-path: site/go.sum
+
+      # Resolves the site's base path (e.g. /lezz.go) from the repository, so
+      # links keep working under either a project page or a custom domain.
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Test the generator
+        working-directory: site
+        run: go test ./...
+
+      - name: Render the site
+        working-directory: site
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          go run . \
+            -docs ../docs \
+            -out ../dist/site \
+            -base "${{ steps.pages.outputs.base_path }}" \
+            -version "${VERSION:-dev}"
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
