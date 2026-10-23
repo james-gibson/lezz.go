@@ -291,8 +291,8 @@ func FuzzProdTemplates(f *testing.F) {
 					ClusterID string `yaml:"cluster_id"`
 				} `yaml:"federation"`
 			}
-			if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
-				t.Fatalf("alarm %s is not valid YAML: %v\n%s", n.Name, err, out)
+			if decodeErr := yaml.Unmarshal([]byte(out), &doc); decodeErr != nil {
+				t.Fatalf("alarm %s is not valid YAML: %v\n%s", n.Name, decodeErr, out)
 			}
 			if doc.Service.Environment != "lezz-prod" {
 				t.Fatalf("alarm %s environment = %q", n.Name, doc.Service.Environment)

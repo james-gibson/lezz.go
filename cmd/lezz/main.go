@@ -187,16 +187,6 @@ func main() {
 // cluster detached, publishing ~/.lezz/demo-state.json so `status` and `stop`
 // can reach it from any terminal.
 func cmdDemo(ctx context.Context) {
-	if helpOnly("demo", os.Args[2:]) {
-		return
-	}
-	// demo takes no arguments. Refusing them keeps a mistyped flag from
-	// launching a second cluster — the failure mode that `demo --help` had.
-	if err := noArguments("demo", os.Args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, "demo:", err)
-		os.Exit(2)
-	}
-	if err := demo.Run(ctx); err != nil {
 	args := os.Args[2:]
 	if len(args) > 0 {
 		switch args[0] {
@@ -2197,6 +2187,7 @@ var commandDocs = []commandDoc{
 	{"demo status", "lezz demo status", "Show a running demo cluster and probe its endpoints", true},
 	{"demo restart", "lezz demo restart [flags]", "Restart the demo cluster, reusing the same ports when free", true},
 	{"auto", "lezz auto", "Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry", true},
+	{"prod", "lezz prod [flags]", "Launch a prod cluster — mirrored alarm_a, invisible fallback; SIGHUP rotates it as a launchd service", true},
 	{"queue", "lezz queue [--config file]", "Run a spool + FIFO queue sidecar for a rate-limited upstream", true},
 	{"cache", "lezz cache [--config file]", "Serve a read-through cache of GitHub PR view/diff data", true},
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},

@@ -35,12 +35,12 @@ func startProcessEnv(name string, args []string, logFile string, env []string) (
 	if err != nil {
 		return nil, err
 	}
-	return startBinary(binary, args, logFile)
+	return startBinary(binary, args, logFile, env)
 }
 
 // startBinary is startProcess for a binary that has already been resolved, so
 // the process that runs is the one that was checked.
-func startBinary(binary string, args []string, logFile string) (*exec.Cmd, error) {
+func startBinary(binary string, args []string, logFile string, env []string) (*exec.Cmd, error) {
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // logFile is constructed from a temp dir under our control
 	if err != nil {
 		return nil, fmt.Errorf("open log file %s: %w", logFile, err)
@@ -492,7 +492,7 @@ func Run(ctx context.Context, opts Options) error {
 	for _, note := range adhdNotes {
 		fmt.Printf("adhd: %s\n", note)
 	}
-	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath)
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, nil)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}

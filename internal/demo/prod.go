@@ -225,12 +225,12 @@ func prodServiceArgs(o ProdOptions, generation int) []string {
 	}
 }
 
-func prodStateDir(isotope string) (string, error) {
+func prodStateDir(name string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
-	dir := filepath.Join(home, ".lezz", "prod", isotope)
+	dir := filepath.Join(home, ".lezz", "prod", name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create state dir %s: %w", dir, err)
 	}
@@ -480,8 +480,8 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 
 	if opts.Child {
 		fmt.Println("child generation waiting for the previous cluster to release its ports...")
-		if err := waitPortsFree(ctx, prodPorts(opts.BasePort), 90*time.Second); err != nil {
-			return err
+		if waitErr := waitPortsFree(ctx, prodPorts(opts.BasePort), 90*time.Second); waitErr != nil {
+			return waitErr
 		}
 		removeOlderProdServices(opts.Generation)
 	}
@@ -500,19 +500,19 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	nodes := plan.Nodes
 	primary := plan.Primary
 
-	if err := ensureProdDirs(root, nodes); err != nil {
-		return err
+	if dirErr := ensureProdDirs(root, nodes); dirErr != nil {
+		return dirErr
 	}
-	if err := ensureTools(ctx, "adhd", "ocd-smoke-alarm"); err != nil {
-		return err
+	if toolErr := ensureTools(ctx, "adhd", "ocd-smoke-alarm"); toolErr != nil {
+		return toolErr
 	}
 
 	alarmBin, err := tools.Find("ocd-smoke-alarm")
 	if err != nil {
 		return fmt.Errorf("resolve ocd-smoke-alarm: %w", err)
 	}
-	if _, err := tools.Find("adhd"); err != nil {
-		return fmt.Errorf("resolve adhd: %w", err)
+	if _, findErr := tools.Find("adhd"); findErr != nil {
+		return fmt.Errorf("resolve adhd: %w", findErr)
 	}
 
 	// --- Write configs ------------------------------------------------------
@@ -604,7 +604,7 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 		procs = append(procs, cmd)
 	}
 	for _, n := range nodes {
-		if err := waitPortOpen(ctx, fmt.Sprintf("0.0.0.0:%d", n.ADHDPort)); err != nil {
+		if err := waitServiceOpen(ctx, fmt.Sprintf("0.0.0.0:%d", n.ADHDPort), nil); err != nil {
 			return fmt.Errorf("adhd-%s readiness: %w", n.Name, err)
 		}
 	}

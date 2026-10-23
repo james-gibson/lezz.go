@@ -59,14 +59,38 @@ type plistData struct {
 }
 
 // Install writes the launchd plist and loads it so the service starts immediately.
-func Install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
-	return InstallArgs(t.Name, p.Name, binPath, p.Args)
+//
+// Before writing anything it probes the MCP address the profile claims (see
+// CheckEndpoint): a service installed over a port another process owns would be
+// green in `lezz service list` and serve nothing. force skips that preflight for
+// the deliberate shared-port case — the operator has to say so out loud.
+//
+// The returned notes are the checks the preflight could not prove; the caller
+// prints them. They are advisory: only a proven conflict is returned as an error,
+// and then no plist is written.
+func Install(t tools.Tool, p tools.DaemonProfile, binPath string, force bool) (notes []string, err error) {
+	if runtime.GOOS != "darwin" {
+		return nil, fmt.Errorf("service install is only supported on macOS (got %s)", runtime.GOOS)
+	}
+
+	if !force {
+		notes, err = CheckEndpoint(fmt.Sprintf(launchdLabel, t.Name, p.Name), p.Args)
+		if err != nil {
+			return notes, err
+		}
+	}
+
+	return notes, InstallArgs(t.Name, p.Name, binPath, p.Args)
 }
 
 // InstallArgs is Install with the program arguments supplied at call time
 // instead of taken from a static DaemonProfile. Commands whose arguments are
 // only known at runtime use it — `lezz prod` installs its next generation with
 // the isotope and base port the current one is running with.
+//
+// It deliberately skips the CheckEndpoint preflight that Install runs: the
+// caller is handing fixed ports over from a generation that is still holding
+// them, so a probe would find the process it is replacing and refuse.
 func InstallArgs(toolName, profileName, binPath string, args []string) error {
 	label := fmt.Sprintf(launchdLabel, toolName, profileName)
 	return installLabel(label, binPath, args)
@@ -94,33 +118,8 @@ func installLabel(label, binPath string, args []string) error {
 func writePlist(label, binPath string, args []string) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return "", fmt.Errorf("service install is only supported on macOS (got %s)", runtime.GOOS)
-//
-// Before writing anything it probes the MCP address the profile claims (see
-// CheckEndpoint): a service installed over a port another process owns would be
-// green in `lezz service list` and serve nothing. force skips that preflight for
-// the deliberate shared-port case — the operator has to say so out loud.
-//
-// The returned notes are the checks the preflight could not prove; the caller
-// prints them. They are advisory: only a proven conflict is returned as an error,
-// and then no plist is written.
-func Install(t tools.Tool, p tools.DaemonProfile, binPath string, force bool) (notes []string, err error) {
-	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("service install is only supported on macOS (got %s)", runtime.GOOS)
 	}
 
-	if !force {
-		notes, err = CheckEndpoint(fmt.Sprintf(launchdLabel, t.Name, p.Name), p.Args)
-		if err != nil {
-			return notes, err
-		}
-	}
-
-	return notes, install(t, p, binPath)
-}
-
-// install renders and loads the plist. Install has already refused on other
-// platforms and on a proven MCP port conflict.
-func install(t tools.Tool, p tools.DaemonProfile, binPath string) error {
 	plistDir, err := launchAgentsDir()
 	if err != nil {
 		return "", err
