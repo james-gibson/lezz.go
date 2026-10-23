@@ -94,6 +94,27 @@ lezz install tuner
 
 Binaries land in `~/.lezz/bin/`. If that directory isn't on your `PATH`, `lezz install` will print the one-liner to add it.
 
+### What a download is checked against
+
+Every install, upgrade and self-update is verified before it lands:
+
+- **Checksum, always.** The release's `checksums.txt` is mandatory — a release
+  that does not publish one is not installed, rather than installed unchecked.
+  `go-selfupdate` only validates when a validator is configured, so the updater
+  always carries `ChecksumValidator{UniqueFilename: "checksums.txt"}`.
+- **Apple signature, on macOS.** A binary signed by a Developer ID team other
+  than `288ZTJGXX9` is refused: a checksum proves the bytes match the release,
+  but only the signature proves who built it, and the checksums file shares an
+  origin with the archive.
+- **Ad-hoc binaries warn, and that warning is the debt.** None of the managed
+  tools sign their darwin releases yet, so refusing them would break every
+  install. The warning names the gap instead of hiding it; once the tools publish
+  Developer ID builds the ad-hoc branch can be deleted without touching callers.
+- **Source builds are opt-in.** When a repository publishes no asset for this
+  platform, `LEZZ_ALLOW_SOURCE_INSTALL=1` builds with `go install …@latest`. It is
+  unpinned and unverified by definition, so it is never the default and the
+  failure message says so.
+
 Installed tools are **not** left to rot: `lezz tools upgrade` compares each binary's
 `-v` output with its latest GitHub release and reinstalls it when it is older.
 `lezz update` does the same for every managed tool after self-updating lezz.

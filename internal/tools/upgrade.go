@@ -122,7 +122,7 @@ func Upgrade(ctx context.Context, tool Tool) (UpgradeResult, error) {
 	if mkErr := os.MkdirAll(binDir, 0o750); mkErr != nil {
 		return UpgradeResult{Tool: tool}, fmt.Errorf("create bin dir: %w", mkErr)
 	}
-	return upgradeInto(ctx, tool, &ghReleaseFetcher{slug: tool.GithubSlug}, binDir)
+	return upgradeInto(ctx, tool, &ghReleaseFetcher{slug: tool.GithubSlug, config: checksumConfig()}, binDir)
 }
 
 // UpgradeAll upgrades the named tools, or every daemonisable managed tool
@@ -144,7 +144,7 @@ func UpgradeAll(ctx context.Context, names []string) ([]UpgradeResult, error) {
 
 	results := make([]UpgradeResult, 0, len(selected))
 	for _, tool := range selected {
-		result, upErr := upgradeInto(ctx, tool, &ghReleaseFetcher{slug: tool.GithubSlug}, binDir)
+		result, upErr := upgradeInto(ctx, tool, &ghReleaseFetcher{slug: tool.GithubSlug, config: checksumConfig()}, binDir)
 		result.Err = upErr
 		results = append(results, result)
 	}
@@ -178,9 +178,13 @@ func upgradeInto(ctx context.Context, tool Tool, rm releaseManager, binDir strin
 		}
 	}
 
-	ver, err := rm.FetchLatest(ctx, filepath.Join(binDir, tool.Name))
+	dest := filepath.Join(binDir, tool.Name)
+	ver, err := rm.FetchLatest(ctx, dest)
 	if err != nil {
 		return result, fmt.Errorf("download %s: %w", tool.Name, err)
+	}
+	if sigErr := verifyInstalledBinary(ctx, dest, defaultWarn); sigErr != nil {
+		return result, sigErr
 	}
 	result.Changed = true
 	if norm, ok := normalizeVersion(ver); ok {
