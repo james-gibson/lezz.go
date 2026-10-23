@@ -38,9 +38,14 @@ var Registry = []Tool{
 		GithubSlug: "james-gibson/adhd",
 		Profiles: []DaemonProfile{
 			{
+				// A bare --headless loads config.DefaultConfig(), whose
+				// MCPServer.Enabled is false, so the daemon would expose no MCP
+				// server at all. Passing --mcp-addr both enables the server and
+				// sets its address; loopback keeps the unauthenticated MCP
+				// surface off the LAN (":9090" would bind 0.0.0.0).
 				Name:        "idle",
-				Description: "headless mode — running but not connected to any smoke-alarm",
-				Args:        []string{"--headless"},
+				Description: "headless MCP server on 127.0.0.1:9090 — running but not connected to any smoke-alarm",
+				Args:        []string{"--headless", "--mcp-addr", "127.0.0.1:9090"},
 			},
 		},
 	},

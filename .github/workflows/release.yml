@@ -9,7 +9,13 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------------
+  # 1. Binaries. Goreleaser builds and archives every advertised target but does
+  #    not publish: releases here are immutable, so there must be exactly one
+  #    job that creates a release, and it must have every asset in hand.
+  # ---------------------------------------------------------------------------
+  binaries:
+    name: Binaries
     runs-on: ubuntu-latest
     env:
       LEZZ_GITHUB_CLIENT_ID: ${{ vars.LEZZ_GITHUB_CLIENT_ID }}
@@ -60,14 +66,135 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --skip=publish
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2. Images and the OTA package, built by the reusable workflow. Dispatch that
+  #    workflow on its own for a full dry run that publishes nothing.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Images and OTA
+    uses: ./.github/workflows/release-ota.yml
+    with:
+      environment: ${{ github.ref_name }}
+
+  # ---------------------------------------------------------------------------
+  # 3. One publisher. Downloads every artifact from this run and creates the
+  #    release once, so no two jobs race to create it.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish release
+    needs: [binaries, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -l dist
+
+      - name: Describe the image assets
         env:
+
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          APP_ENV: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The images are named by their configs, not by this workflow, and the
+          # builder publishes whichever form it produced (.img.zst, or the raw
+          # .img if compression was off). Derive the release body from the assets
+          # that actually arrived so the instructions cannot go stale
+          # (james-gibson/lezz.go#34).
+          images=()
+          for f in dist/*.img dist/*.img.*; do
+            if [ -f "$f" ]; then
+              images+=("$(basename "$f")")
+            fi
+          done
+          if [ ${#images[@]} -eq 0 ]; then
+            echo "No image assets in dist/; refusing to describe a release without them" >&2
+            ls -l dist >&2 || true
+            exit 1
+          fi
+
+          compressed=n
+          case "${images[0]:-}" in
+            *.zst) compressed=y ;;
+          esac
+
+          {
+            echo '## Binaries, lab images, and an OTA package'
+            echo
+            echo "**Environment:** \`${APP_ENV}\`"
+            echo
+            echo "Two images come out of the same layer and differ only by config:"
+            echo
+            echo '| Asset | Boots into |'
+            echo '| --- | --- |'
+            for name in "${images[@]}"; do
+              case "$name" in
+                *-auto*) boots='`lezz auto` as a systemd service: a base cluster, empty and awaiting peers' ;;
+                *)       boots='an idle base image — `lezz` is installed, nothing runs' ;;
+              esac
+              echo "| \`${name}\` | ${boots} |"
+            done
+            echo
+            echo 'The alarms are not baked into either image: `lezz install <tool>` fetches'
+            echo 'them from their own ARM64 releases.'
+            echo
+            echo '`aptupgrade.tar.zst` is the Raspberry Pi Connect OTA package.'
+            echo
+            echo '### Install on a Raspberry Pi'
+            echo
+            echo '1. Flash an image.'
+            if [ "${compressed}" = y ]; then
+              echo '   Raspberry Pi Imager accepts the `.img.zst` assets as they are —'
+              echo '   select one and let it decompress on write, no manual step:'
+            else
+              echo '   Use Raspberry Pi Imager and select one of the `.img` assets:'
+            fi
+            for name in "${images[@]}"; do
+              case "$name" in
+                *-auto*) boots='boots into `lezz auto`' ;;
+                *)       boots='idle base image' ;;
+              esac
+              echo "   - \`${name}\` — ${boots}"
+            done
+            echo '2. One-time setup on the target Pi:'
+            echo '   ```bash'
+            echo '   # Standard Raspberry Pi OS'
+            echo '   sudo apt update'
+            echo '   sudo apt install rpi-connect rpi-connect-ota'
+            echo '   # Raspberry Pi OS Lite'
+            echo '   sudo apt install rpi-connect-lite rpi-connect-ota'
+            echo '   ```'
+            echo '3. Enable the service:'
+            echo '   ```bash'
+            echo '   rpi-connect ota on'
+            echo '   ```'
+            echo '4. Deploy via Raspberry Pi Connect using the asset URL, and verify it'
+            echo '   against the SHA256 in `aptupgrade.tar.zst.sha256sum`.'
+          } > release-body.md
 
       # Assert the darwin binaries really carry a signature. GoReleaser fails
       # loudly on a bad certificate, but this also catches a skipped signing
@@ -107,3 +234,14 @@ jobs:
             team=$(jq -r '.[0].superBlob.codeDirectories[0].teamID // ""' <<<"$json")
             echo "signed: $bin (team: ${team:-unknown})"
           done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body_path: release-body.md
+
+      - name: Print install instructions
+        run: cat release-body.md >> "$GITHUB_STEP_SUMMARY"
+

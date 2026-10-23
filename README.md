@@ -28,13 +28,15 @@ receipt, a honeypot contact. Model: `kb/scripts/lab/PLANE.md`. Figures:
 
 ```sh
 # Demo cluster
-lezz demo                              # start a self-contained cluster
+lezz demo                              # start a self-contained cluster (foreground)
+lezz demo start|stop|status|restart    # detached lifecycle; stable ports
 lezz auto                              # start a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
 lezz prod --isotope NAME               # two logical alarms (mirrored A + fallback), three nodes; SIGHUP rotates it as a launchd service
 
 # Tool lifecycle
 lezz install <tool>                    # download and install a managed tool
-lezz update                            # self-update lezz to the latest release
+lezz tools upgrade [tool...]           # upgrade managed tools to their latest releases
+lezz update                            # update lezz and all managed tools
 lezz version                           # print tool versions and daemon status
 
 # Process control
@@ -52,6 +54,11 @@ lezz app install [--dock]              # build and sign ~/Applications/Lezz.app
 lezz app open [-- args...]             # launch via LaunchServices (default: auto)
 lezz app info                          # show bundle identity and signature
 lezz app uninstall [--force]           # remove Lezz.app
+
+# lezz.sea dashboard (signed dev release)
+lezz sea                               # launch it, installing it if missing
+lezz sea --check                       # show the installed build and whether it verifies
+lezz sea --install                     # install or update without launching
 
 # GitHub device-flow auth (quick path; token in keychain)
 lezz auth github                       # sign in with a GitHub OAuth App
@@ -93,6 +100,36 @@ lezz install tuner
 
 Binaries land in `~/.lezz/bin/`. If that directory isn't on your `PATH`, `lezz install` will print the one-liner to add it.
 
+### What a download is checked against
+
+Every install, upgrade and self-update is verified before it lands:
+
+- **Checksum, always.** The release's `checksums.txt` is mandatory — a release
+  that does not publish one is not installed, rather than installed unchecked.
+  `go-selfupdate` only validates when a validator is configured, so the updater
+  always carries `ChecksumValidator{UniqueFilename: "checksums.txt"}`.
+- **Apple signature, on macOS.** A binary signed by a Developer ID team other
+  than `288ZTJGXX9` is refused: a checksum proves the bytes match the release,
+  but only the signature proves who built it, and the checksums file shares an
+  origin with the archive.
+- **Ad-hoc binaries warn, and that warning is the debt.** None of the managed
+  tools sign their darwin releases yet, so refusing them would break every
+  install. The warning names the gap instead of hiding it; once the tools publish
+  Developer ID builds the ad-hoc branch can be deleted without touching callers.
+- **Source builds are opt-in.** When a repository publishes no asset for this
+  platform, `LEZZ_ALLOW_SOURCE_INSTALL=1` builds with `go install …@latest`. It is
+  unpinned and unverified by definition, so it is never the default and the
+  failure message says so.
+
+Installed tools are **not** left to rot: `lezz tools upgrade` compares each binary's
+`-v` output with its latest GitHub release and reinstalls it when it is older.
+`lezz update` does the same for every managed tool after self-updating lezz.
+
+```sh
+lezz tools upgrade                      # every managed tool except lezz
+lezz tools upgrade ocd-smoke-alarm      # one tool
+```
+
 ---
 
 ## Daemon Profiles
@@ -102,7 +139,7 @@ Each tool can be run as a macOS LaunchAgent under the `co.james-gibson.lab.*` na
 | Tool | Profile | Args | Description |
 |---|---|---|---|
 | `lezz` | `demo` | `demo` | self-contained demo cluster |
-| `adhd` | `idle` | `--headless` | headless MCP server, no smoke-alarm connected |
+| `adhd` | `idle` | `--headless --mcp-addr 127.0.0.1:9090` | headless MCP server on loopback `127.0.0.1:9090`, no smoke-alarm connected |
 | `ocd-smoke-alarm` | `idle` | _(none)_ | running, no targets configured |
 | `tuner` | `idle` | _(none)_ | running, no configuration |
 
@@ -118,18 +155,81 @@ lezz service list
 # Logs land in ~/.lezz/logs/co.james-gibson.lab.<tool>.<profile>.{log,err}
 ```
 
+A profile that names an MCP address is **probed before its plist is written**.
+`adhd` logs a failed bind as a warning and keeps running, so a service installed
+over a taken port would be green in `lezz service list` while exposing no MCP
+server; the install therefore refuses, and names the owner and the fix:
+
+```sh
+lezz service install adhd idle
+# service install failed: refusing to install a service whose MCP port is in use:
+#   127.0.0.1:9090 is held by PID 1202 (adhd); stop it or choose another --mcp-addr,
+#   or pass --force to install anyway
+
+lezz service install --force adhd idle   # deliberate shared-port override
+```
+
+The probe is fail-closed only on a proven conflict: when the address cannot be
+probed (not local to this host, unparseable, no permission), the install goes
+ahead with a warning on stderr. A port held by the currently installed instance
+of the same service is expected — the install reloads it.
+
 ---
 
 ## lezz demo
 
 `lezz demo` starts a self-contained cluster without requiring any pre-existing configuration:
 
-- Two `ocd-smoke-alarm` instances, each watching the other
+- Two smoke-alarm links running **in-process** (`github.com/james-gibson/smoke-alarm/pkg/smokealarm`), each watching the other — no generated alarm YAML and no `ocd-smoke-alarm` subprocess
 - One `adhd` instance in headless mode, registered as an isotope with the primary smoke-alarm
 - A fixed-port discovery registry at `:19100/cluster`
 - mDNS advertisement of `_lezz-demo._tcp`
 
+The links honour `health.self_check`, `tuner.advertise`, `alerts.sinks.log` and
+per-link known-state baselines (`state-a` / `state-b`), and they shut down when
+lezz exits. `adhd` still runs as a subprocess: it is a TUI/MCP server with its
+own lifecycle, and the facade is smoke-alarm only.
+
 On startup it prints a cluster summary including isotope trust levels from `/isotope/list`.
+
+The installed `adhd` is **probed before it is started**: a build that does not
+accept the demo's command line is reported at once, with adhd's own message and
+the upgrade that fixes it, instead of surfacing as a readiness timeout later. A
+build that predates the advertise-guard override (`--force`, adhd#15) is started
+without it and says so — that release has no guard to override.
+
+A child that dies during startup fails the demo immediately rather than after
+the timeout, and the error carries the tail of its log. The full log is copied
+to `~/.lezz/logs/demo-<service>.log` before the demo's temp root is removed, so
+the cause outlives the process that produced it.
+
+### Lifecycle
+
+`lezz demo` runs in the foreground. To leave the cluster running:
+
+```sh
+lezz demo start                     # detached; returns once the cluster is ready
+lezz demo status                    # pid, endpoints, and a live probe of each
+lezz demo stop                      # SIGTERM, waits for the process to exit
+lezz demo restart                   # stop + start, same ports when free
+```
+
+`start` writes `~/.lezz/demo-state.json` (pid, endpoints, log directory) and sends
+the child's output to `~/.lezz/logs/demo.log`. `status` and `stop` read that file,
+so they also reach a foreground `lezz demo` started in another terminal. The state
+file is removed when the cluster exits; a state file whose process is gone is
+cleaned up on the next `status`.
+
+Ports are stable across restarts: the last run's ports are saved in
+`~/.lezz/demo-ports.json` and reused when they are still free. Pin them when the
+endpoints must be known up front:
+
+```sh
+lezz demo start --alarm-a-port 52100 --alarm-b-port 52101 --adhd-port 52102
+```
+
+A pinned port that is already in use fails the start instead of quietly moving the
+endpoint.
 
 Connect the dashboard to a running demo cluster:
 
@@ -142,9 +242,10 @@ adhd --config ~/.lezz/demo-adhd.yaml
 Inspect cluster state:
 
 ```sh
-curl http://localhost:8088/status | jq .
-curl http://localhost:8088/isotope/list | jq .
+lezz demo status                     # endpoints, pid, and probe results
 curl http://localhost:19100/cluster | jq .
+# alarm ports come from the status output:
+curl http://localhost:<alarm-a-port>/status | jq .
 ```
 
 ---
@@ -177,6 +278,14 @@ Because the base cluster carries no targets until they appear, a second
 `lezz auto` run on the same host reuses the running registry, and further
 `ocd-smoke-alarm` instances started with the same federation range chain on as
 followers automatically.
+
+**Why `auto` does not embed its links.** `pkg/smokealarm` exposes the monitor,
+health, alerts and known-state subsystems but not federation — an embedded
+instance reports `federation.enabled` as unsupported. Since federation *is* how
+`auto` chains its links, adopting the facade here would start two links that
+never join the mesh. `auto` therefore keeps spawning
+`ocd-smoke-alarm serve -config …`; `demo` (hand-peered) is the path that runs
+in-process. Revisit when the facade exposes federation.
 
 ---
 
@@ -265,6 +374,44 @@ Nothing that binds a port, spawns a process, writes a plist or calls
 start a cluster.
 
 ---
+## lezz sea
+
+Launch the [lezz.sea](https://github.com/james-gibson/lezz.sea) dashboard. When
+the app is already installed, this is just `open -a`: no network, no update.
+
+```sh
+lezz sea                 # launch; install from the dev release if missing
+lezz sea --install       # install or update, do not launch
+lezz sea --check         # what is installed, and does it verify
+lezz sea --force         # reinstall over a verified copy
+```
+
+The dashboard is published as a signed macOS bundle on the `dev` prerelease of
+`james-gibson/lezz.sea`. An install goes through every check below, in this
+order, and nothing is unpacked or installed until the previous one passes:
+
+1. **HTTPS to an allowlist.** `github.com` and GitHub's asset hosts only, and
+   every redirect is checked too — a redirect cannot move the download to a new
+   origin or downgrade it to HTTP.
+2. **SHA-256 against the published manifest** (`dev.json`). This rejects a
+   truncated or substituted body before it is ever read as an archive.
+3. **Apple's signature on the unpacked bundle**: `codesign --verify --deep
+   --strict`, authority `Developer ID Application: James Gibson (288ZTJGXX9)`,
+   team `288ZTJGXX9`, hardened runtime, secure timestamp. The signature — not
+   the checksum — is the trust anchor, because the checksum comes from the same
+   origin as the archive while the signature comes from Apple's chain.
+4. **Notarization**: a stapled ticket plus a Gatekeeper assessment of
+   `accepted / Notarized Developer ID`.
+
+A signed build with no notarization ticket is refused, because macOS would block
+its first launch anyway. `--allow-unnotarized` installs one deliberately (it
+warns); it exists for the window before a notarized build is published and
+should not be scripted against.
+
+Installing is a staged copy plus a rename into `~/Applications`, never an
+in-place overwrite, and it refuses to replace a running copy. The loopback
+dashboard shows exactly the cluster it is told about — `lezz sea` only decides
+which bundle runs.
 
 ## lezz agent
 
@@ -309,12 +456,29 @@ entry without touching the file. Zed detects the change without a restart.
 
 ## lezz update
 
-`lezz update` checks GitHub for a newer release and atomically replaces the running binary.
+`lezz update` updates lezz itself **and every managed tool**. lezz is checked and
+atomically replaced from its own releases; each tool (`adhd`, `ocd-smoke-alarm`,
+`tuner`) is asked for its version with `-v`, compared with its latest GitHub
+release, and reinstalled only when it is older.
 
 ```sh
-lezz v0.1.25 — checking for updates...
-new version available: v0.1.26 → applying...
-updated to v0.1.26 — restart lezz to use the new version
+lezz v0.5.1 — checking for updates...
+new lezz version available: v0.5.2 → applying...
+updated lezz to v0.5.2 — restart lezz to use the new version
+
+managed tools:
+  adhd             0.8.6 → 0.11.1
+  ocd-smoke-alarm  up to date (0.11.0)
+  tuner            up to date (0.1.0)
+```
+
+A tool whose version cannot be determined (a source build that reports only a
+commit hash) is treated as stale and replaced with the released build, the same
+rule lezz applies to itself. `lezz tools upgrade [tool...]` runs only that half —
+useful when a released tool fix is the thing you are waiting for, e.g.
+
+```sh
+lezz tools upgrade ocd-smoke-alarm
 ```
 
 **Pseudo-version and dirty-build detection:** dev builds (`v0.1.25-0.20260404234801-2a30d6a85e23`) and dirty local builds (`+dirty`) are treated as stale regardless of the version number — `lezz update` will always apply the latest release when run from such a build. Clean tagged releases (`v1.2.3`, `v1.2.3-alpha.1`) are compared normally.

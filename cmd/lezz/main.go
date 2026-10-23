@@ -29,6 +29,7 @@ import (
 	"github.com/james-gibson/lezz.go/internal/githubauth"
 	"github.com/james-gibson/lezz.go/internal/mcpwrapper"
 	"github.com/james-gibson/lezz.go/internal/queue"
+	"github.com/james-gibson/lezz.go/internal/sea"
 	"github.com/james-gibson/lezz.go/internal/seed"
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
 	"github.com/james-gibson/lezz.go/internal/service"
@@ -113,6 +114,10 @@ func main() {
 		cmdSee(ctx)
 		cancel()
 
+	case "sea":
+		cmdSea(ctx)
+		cancel()
+
 	case "debug":
 		cmdDebug(ctx)
 		cancel()
@@ -131,6 +136,10 @@ func main() {
 
 	case "install":
 		cmdInstall(ctx)
+		cancel()
+
+	case "tools":
+		cmdTools(ctx)
 		cancel()
 
 	case "update":
@@ -172,8 +181,11 @@ func main() {
 	}
 }
 
-// lezz demo
-// Launches a self-contained demo cluster: 2 ocd-smoke-alarm instances + adhd headless.
+// lezz demo [start|stop|status|restart] [--*-port N]
+//
+// Bare `lezz demo` runs the cluster in the foreground. `start` runs the same
+// cluster detached, publishing ~/.lezz/demo-state.json so `status` and `stop`
+// can reach it from any terminal.
 func cmdDemo(ctx context.Context) {
 	if helpOnly("demo", os.Args[2:]) {
 		return
@@ -185,8 +197,172 @@ func cmdDemo(ctx context.Context) {
 		os.Exit(2)
 	}
 	if err := demo.Run(ctx); err != nil {
+	args := os.Args[2:]
+	if len(args) > 0 {
+		switch args[0] {
+		case "start":
+			cmdDemoStart(ctx, args[1:])
+			return
+		case "stop":
+			cmdDemoStop(args[1:])
+			return
+		case "status":
+			cmdDemoStatus(ctx, args[1:])
+			return
+		case "restart":
+			cmdDemoRestart(ctx, args[1:])
+			return
+		}
+	}
+
+	fs, flags := newDemoFlagSet("demo")
+	if !parseOrHelp(fs, args) {
+		return
+	}
+	noPositional("demo", fs)
+	if err := demo.Run(ctx, flags.options()); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)
 		os.Exit(1)
+	}
+}
+
+// cmdDemoStart runs the cluster detached and waits until it publishes its
+// endpoints.
+func cmdDemoStart(ctx context.Context, args []string) {
+	fs, flags := newDemoFlagSet("demo start")
+	if !parseOrHelp(fs, args) {
+		return
+	}
+	noPositional("demo start", fs)
+
+	state, err := demo.StartDetached(ctx, flags.options())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "demo start:", err)
+		os.Exit(1)
+	}
+	printDemoState(state)
+	if logPath, logErr := demo.LogPath(); logErr == nil {
+		fmt.Printf("\nlogs         %s\n", logPath)
+	}
+	fmt.Print("stop         lezz demo stop\n")
+}
+
+func cmdDemoStop(args []string) {
+	if helpOnly("demo stop", args) {
+		return
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "demo stop: unexpected argument %q\n", args[0])
+		os.Exit(2)
+	}
+	if _, ok := demo.RunningState(); !ok {
+		fmt.Println("demo: not running")
+		return
+	}
+	if err := demo.Stop(15 * time.Second); err != nil {
+		fmt.Fprintln(os.Stderr, "demo stop:", err)
+		os.Exit(1)
+	}
+	fmt.Println("demo stopped")
+}
+
+func cmdDemoStatus(ctx context.Context, args []string) {
+	if helpOnly("demo status", args) {
+		return
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "demo status: unexpected argument %q\n", args[0])
+		os.Exit(2)
+	}
+
+	state, ok := demo.RunningState()
+	if !ok {
+		fmt.Println("demo: not running")
+		os.Exit(1)
+	}
+	printDemoState(state)
+	fmt.Printf("started      %s\n", state.StartedAt.Local().Format(time.RFC3339))
+
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	fmt.Println()
+	for _, h := range demo.Probe(probeCtx, state) {
+		mark := "down"
+		if h.OK {
+			mark = "ok"
+		}
+		detail := ""
+		if !h.OK && h.Detail != "" {
+			detail = " (" + h.Detail + ")"
+		}
+		fmt.Printf("  %-10s %-4s %s%s\n", h.Name, mark, h.Endpoint, detail)
+	}
+	if state.LogDir != "" {
+		fmt.Printf("\nlogs         %s/{alarm-a,alarm-b,adhd}.log\n", state.LogDir)
+	}
+}
+
+func cmdDemoRestart(ctx context.Context, args []string) {
+	fs, flags := newDemoFlagSet("demo restart")
+	if !parseOrHelp(fs, args) {
+		return
+	}
+	noPositional("demo restart", fs)
+
+	running, ok := demo.RunningState()
+	if ok {
+		fmt.Printf("stopping demo (pid %d)...\n", running.PID)
+	}
+	if err := demo.Stop(15 * time.Second); err != nil {
+		fmt.Fprintln(os.Stderr, "demo restart:", err)
+		os.Exit(1)
+	}
+
+	state, err := demo.StartDetached(ctx, flags.options())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "demo restart:", err)
+		os.Exit(1)
+	}
+	printDemoState(state)
+}
+
+// demoFlags holds the port pins shared by demo, demo start and demo restart.
+type demoFlags struct {
+	alarmA int
+	alarmB int
+	adhd   int
+}
+
+func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags := &demoFlags{}
+	fs.IntVar(&flags.alarmA, "alarm-a-port", 0, "pin the alarm-a health port (default: reuse the last run's port when it is free)")
+	fs.IntVar(&flags.alarmB, "alarm-b-port", 0, "pin the alarm-b health port (default: reuse the last run's port when it is free)")
+	fs.IntVar(&flags.adhd, "adhd-port", 0, "pin the adhd MCP port (default: reuse the last run's port when it is free)")
+	return fs, flags
+}
+
+func (f *demoFlags) options() demo.Options {
+	return demo.Options{AlarmAPort: f.alarmA, AlarmBPort: f.alarmB, ADHDPort: f.adhd}
+}
+
+// noPositional rejects bare arguments after the flags.
+func noPositional(cmd string, fs *flag.FlagSet) {
+	if rest := fs.Args(); len(rest) > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected argument %q\n", cmd, rest[0])
+		os.Exit(2)
+	}
+}
+
+// printDemoState is the endpoint block shared by start, status and restart.
+func printDemoState(state demo.State) {
+	fmt.Printf("demo cluster running (pid %d)\n\n", state.PID)
+	fmt.Printf("alarm-a      %s/status\n", state.Cluster.AlarmA)
+	fmt.Printf("alarm-b      %s/status\n", state.Cluster.AlarmB)
+	fmt.Printf("adhd MCP     %s\n", state.Cluster.AdhdMCP)
+	fmt.Printf("discovery    %s\n", state.Discovery)
+	if state.StableConfig != "" {
+		fmt.Printf("dashboard    adhd --config %s\n", state.StableConfig)
 	}
 }
 
@@ -674,36 +850,112 @@ func cmdInstall(ctx context.Context) {
 
 	binDir, _ := tools.BinDir()
 	if binDir != "" && !isOnPath(binDir) {
-		fmt.Printf("\nAdd lezz's bin directory to your PATH:\n")
-		fmt.Printf("  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc && source ~/.zshrc\n", binDir)
+		fmt.Print(pathHint(binDir, os.Getenv("SHELL")))
 	}
 }
 
 // lezz update
+//
+// lezz itself is self-updated from its own releases; every other managed tool
+// is version-checked against its latest GitHub release and reinstalled when it
+// is older. A failure in one half does not silently cancel the other: both are
+// attempted and the exit status reflects any failure.
 func cmdUpdate(ctx context.Context) {
 	if helpOnly("update", os.Args[2:]) {
 		return
 	}
+	if err := noArguments("update", os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "update:", err)
+		fmt.Fprintln(os.Stderr, "to upgrade one tool: lezz tools upgrade <tool>")
+		os.Exit(2)
+	}
 	fmt.Printf("lezz %s — checking for updates...\n", version())
+	ok := true
 
 	latest, hasUpdate, err := selfupdate.Check(ctx, version())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "update check failed:", err)
-		os.Exit(1)
+	switch {
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "lezz update check failed:", err)
+		ok = false
+	case !hasUpdate:
+		fmt.Printf("lezz already up to date (%s)\n", version())
+	default:
+		fmt.Printf("new lezz version available: %s → applying...\n", latest)
+		applied, applyErr := selfupdate.Apply(ctx, version())
+		if applyErr != nil {
+			fmt.Fprintln(os.Stderr, "lezz update failed:", applyErr)
+			ok = false
+		} else {
+			fmt.Printf("updated lezz to %s — restart lezz to use the new version\n", applied)
+		}
 	}
 
-	if !hasUpdate {
-		fmt.Printf("already up to date (%s)\n", version())
+	fmt.Println("\nmanaged tools:")
+	if !upgradeManagedTools(ctx, nil) {
+		ok = false
+	}
+
+	if !ok {
+		os.Exit(1)
+	}
+}
+
+// lezz tools upgrade [tool...]
+func cmdTools(ctx context.Context) {
+	if helpOnly("tools", os.Args[2:]) {
 		return
 	}
-
-	fmt.Printf("new version available: %s → applying...\n", latest)
-	applied, err := selfupdate.Apply(ctx, version())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "update failed:", err)
+	if len(os.Args) < 3 {
+		printCommandUsage(os.Stderr, "tools", nil)
 		os.Exit(1)
 	}
-	fmt.Printf("updated to %s — restart lezz to use the new version\n", applied)
+
+	switch action := os.Args[2]; action {
+	case "upgrade":
+		if helpOnly("tools upgrade", os.Args[3:]) {
+			return
+		}
+		names := os.Args[3:]
+		if len(names) == 0 {
+			fmt.Println("checking managed tools for updates...")
+		}
+		if !upgradeManagedTools(ctx, names) {
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown tools action %q; use upgrade\n", action)
+		os.Exit(1)
+	}
+}
+
+// upgradeManagedTools version-checks the named tools (all non-lezz managed
+// tools when names is empty) and reinstalls any that are older than their latest
+// release. It returns false when any tool failed.
+func upgradeManagedTools(ctx context.Context, names []string) bool {
+	results, err := tools.UpgradeAll(ctx, names)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tools upgrade:", err)
+		return false
+	}
+
+	ok := true
+	for i := range results {
+		r := &results[i]
+		switch {
+		case r.Err != nil:
+			fmt.Fprintf(os.Stderr, "  %-16s failed: %v\n", r.Tool.Name, r.Err)
+			ok = false
+		case r.Changed:
+			from := r.Installed
+			if from == "" {
+				from = r.Note
+			}
+			fmt.Printf("  %-16s %s → %s\n", r.Tool.Name, from, r.Latest)
+		default:
+			fmt.Printf("  %-16s up to date (%s)\n", r.Tool.Name, r.Latest)
+		}
+	}
+	return ok
 }
 
 // lezz start <tool> [args...]
@@ -760,10 +1012,23 @@ func cmdService() {
 		fmt.Fprintln(os.Stderr, "usage: lezz service install|remove <tool> [profile]")
 		os.Exit(1)
 	}
-	toolName := os.Args[3]
+	positional, force := takeFlag(os.Args[3:], "--force")
+	if force && action != "install" {
+		fmt.Fprintln(os.Stderr, "--force is only meaningful for `lezz service install`")
+		os.Exit(2)
+	}
+	if len(positional) < 1 {
+		if action == "install" {
+			fmt.Fprintln(os.Stderr, "usage: lezz service install [--force] <tool> [profile]")
+		} else {
+			fmt.Fprintln(os.Stderr, "usage: lezz service remove <tool> [profile]")
+		}
+		os.Exit(1)
+	}
+	toolName := positional[0]
 	profileName := "idle"
-	if len(os.Args) >= 5 {
-		profileName = os.Args[4]
+	if len(positional) >= 2 {
+		profileName = positional[1]
 	}
 
 	t, ok := tools.Lookup(toolName)
@@ -794,7 +1059,11 @@ func cmdService() {
 			fmt.Fprintf(os.Stderr, "%s is not installed — run: lezz install %s\n", t.Name, t.Name)
 			os.Exit(1)
 		}
-		if err := service.Install(t, p, binPath); err != nil {
+		notes, err := service.Install(t, p, binPath, force)
+		for _, note := range notes {
+			fmt.Fprintf(os.Stderr, "service install: %s\n", note)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "service install failed:", err)
 			os.Exit(1)
 		}
@@ -1138,7 +1407,7 @@ func resolveAgentCommand(explicit string) (string, error) {
 }
 
 func resolveExecutable(v string) (string, error) {
-	if st, err := os.Stat(v); err == nil && !st.IsDir() {
+	if st, err := os.Stat(v); err == nil && !st.IsDir() { //nolint:gosec // --command is the user asking for this exact path
 		return v, nil
 	}
 	return exec.LookPath(v)
@@ -1236,6 +1505,58 @@ func isOnPath(dir string) bool {
 		}
 	}
 	return false
+}
+
+// pathHint is the guidance printed when lezz's bin directory is not on PATH.
+//
+// It never hands over an unguarded append. `echo ... >> ~/.zshrc` is safe to
+// read and dangerous to paste twice: the print was already gated on PATH, but
+// the edit was not, so one real ~/.zshrc collected 294 identical exports
+// (james-gibson/lezz.go#15). The permanent line is therefore gated on the file's
+// contents, and the session line is separate so nothing has to be appended at
+// all.
+func pathHint(binDir, shellPath string) string {
+	exportLine := fmt.Sprintf("export PATH=\"%s:$PATH\"", binDir)
+
+	var b strings.Builder
+	b.WriteString("\nAdd lezz's bin directory to your PATH:\n\n")
+	fmt.Fprintf(&b, "  this shell:  %s\n", exportLine)
+
+	profile := shellProfile(shellPath)
+	if profile == "" {
+		b.WriteString("\n  add that line to your shell profile to make it permanent.\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n  once, in %s — appends only if the line is absent:\n", profile)
+	fmt.Fprintf(&b, "  %s\n", pathProfileCommand(exportLine, profile))
+	return b.String()
+}
+
+// pathProfileCommand is the copy-pasteable profile edit: grep decides, and the
+// echo only runs when the line is missing. Running it any number of times
+// leaves exactly one line. -s keeps the first run quiet when the profile does
+// not exist yet.
+func pathProfileCommand(exportLine, profile string) string {
+	return fmt.Sprintf("grep -qsF '%s' %s || echo '%s' >> %s", exportLine, profile, exportLine, profile)
+}
+
+// shellProfile names the startup file that holds a POSIX export line, or "" when
+// this hint cannot be trusted for the shell — fish, for one, does not take
+// `export PATH=...`, so it gets the session line only.
+func shellProfile(shellPath string) string {
+	if strings.TrimSpace(shellPath) == "" {
+		return "~/.profile"
+	}
+	switch shell := filepath.Base(shellPath); {
+	case strings.Contains(shell, "zsh"):
+		return "~/.zshrc"
+	case strings.Contains(shell, "bash"):
+		return "~/.bash_profile"
+	case shell == "sh" || shell == "dash" || shell == "ksh":
+		return "~/.profile"
+	default:
+		return ""
+	}
 }
 
 // lezz auth github|status|logout
@@ -1496,6 +1817,77 @@ func normalizeArgs(argv []string) []string {
 		out = append(out, "auto")
 	}
 	return out
+}
+
+// lezz sea [--install] [--check] [--force] [--allow-unnotarized] [--channel dev]
+//
+// Launches the lezz.sea dashboard. When the app is missing it is downloaded
+// from the signed dev release and verified before anything is launched: the
+// archive's SHA-256, then the bundle's Developer ID signature, team, hardened
+// runtime, secure timestamp and notarization ticket. Nothing in that path
+// trusts the download — the signature is the trust anchor, and a build that
+// fails it is refused rather than installed.
+func cmdSea(ctx context.Context) {
+	fs := flag.NewFlagSet("sea", flag.ContinueOnError)
+	installOnly := fs.Bool("install", false, "install or update without launching")
+	check := fs.Bool("check", false, "report what is installed and exit")
+	force := fs.Bool("force", false, "reinstall even when a verified copy is installed")
+	allowUnnotarized := fs.Bool("allow-unnotarized", false, "install a signed build with no notarization ticket (dev only)")
+	channel := fs.String("channel", sea.Channel, "release channel to install from")
+	if !parseOrHelp(fs, os.Args[2:]) {
+		return
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "sea: unexpected argument %q\n", fs.Args()[0])
+		printCommandUsage(os.Stderr, "sea", nil)
+		os.Exit(1)
+	}
+	if runtime.GOOS != "darwin" {
+		fmt.Fprintln(os.Stderr, "sea: lezz.sea is a macOS application; this host is "+runtime.GOOS)
+		os.Exit(1)
+	}
+
+	if *check {
+		path, ok := sea.Installed("")
+		if !ok {
+			fmt.Printf("%s is not installed\n", sea.AppName)
+			return
+		}
+		info, err := sea.Inspect(ctx, path, *allowUnnotarized)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sea: %s does not verify: %v\n", path, err)
+			os.Exit(1)
+		}
+		fmt.Printf("installed %s\n", info.Path)
+		fmt.Printf("  version   %s (%s)\n", info.Version, info.Build)
+		fmt.Printf("  signature %s\n", info.Authority)
+		fmt.Printf("  team      %s\n", info.TeamID)
+		fmt.Printf("  notarized %t\n", info.Notarized)
+		return
+	}
+
+	res, err := sea.Ensure(ctx, sea.Options{
+		Channel:          *channel,
+		Force:            *force,
+		AllowUnnotarized: *allowUnnotarized,
+		Log:              func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sea:", err)
+		os.Exit(1)
+	}
+	if res.Downloaded {
+		fmt.Printf("installed %s %s (%s)\n", sea.AppName, res.Version, res.Build)
+	}
+	if *installOnly {
+		fmt.Printf("  %s\n", res.Path)
+		return
+	}
+	if err := appbundle.Launch(res.Path, nil, false, false); err != nil {
+		fmt.Fprintln(os.Stderr, "sea:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("launched %s\n", res.Path)
 }
 
 // lezz app install|open|info|uninstall
@@ -1765,6 +2157,22 @@ func noArguments(path string, args []string) error {
 	return fmt.Errorf("unexpected argument %q; lezz %s takes no arguments (try lezz %s --help)", args[0], path, path)
 }
 
+// takeFlag removes name (or its single-dash spelling) from args and reports
+// whether it was there. `lezz service` takes positionals only, so --force may
+// appear anywhere among them.
+func takeFlag(args []string, name string) (rest []string, found bool) {
+	rest = make([]string, 0, len(args))
+	short := "-" + strings.TrimLeft(name, "-")
+	for _, a := range args {
+		if a == name || a == short {
+			found = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, found
+}
+
 // commandDoc is one row of the command table. usage() and `lezz <cmd> --help`
 // both read it, so the two cannot describe a command differently.
 type commandDoc struct {
@@ -1783,14 +2191,18 @@ type commandDoc struct {
 // commandDocs is the single source for the command list and for per-command
 // help. Order is the order usage() prints.
 var commandDocs = []commandDoc{
-	{"demo", "lezz demo", "Launch a self-contained demo cluster", true},
+	{"demo", "lezz demo [flags]", "Launch a self-contained demo cluster in the foreground", true},
+	{"demo start", "lezz demo start [flags]", "Start the demo cluster detached", true},
+	{"demo stop", "lezz demo stop", "Stop a running demo cluster", true},
+	{"demo status", "lezz demo status", "Show a running demo cluster and probe its endpoints", true},
+	{"demo restart", "lezz demo restart [flags]", "Restart the demo cluster, reusing the same ports when free", true},
 	{"auto", "lezz auto", "Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry", true},
-	{"prod", "lezz prod [--isotope NAME]", "Launch a prod cluster — mirrored alarm_a, invisible fallback; SIGHUP rotates it as a launchd service", true},
 	{"queue", "lezz queue [--config file]", "Run a spool + FIFO queue sidecar for a rate-limited upstream", true},
 	{"cache", "lezz cache [--config file]", "Serve a read-through cache of GitHub PR view/diff data", true},
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},
 	{"seed init", "lezz seed init [--surface base]", "Create seed.json (project id, surface, auth ref)", true},
 	{"see", "lezz see", "Read seed.json, show the 42i start and surface", true},
+	{"sea", "lezz sea [--install|--check]", "Launch lezz.sea, installing it from the signed dev release when missing", true},
 	{"debug", "lezz debug keygen|lease|fetch-keys", "Debug lease keys and signing", true},
 	{"anon", "lezz anon [--lease FILE] [--listen host:port]", "Serve the anonymous MCP surface (empty tool list); the debug socket needs a valid lease", true},
 	{"app", "lezz app install|open|info|uninstall", "Wrap the lezz binary in a macOS .app: a stable identity for TCC permissions and passkeys", false},
@@ -1806,10 +2218,12 @@ var commandDocs = []commandDoc{
 	{"run", "lezz run <tool> [args...]", "Replace lezz with the tool (exec)", true},
 	{"start", "lezz start <tool> [args...]", "Spawn the tool as a child process (wait)", true},
 	{"install", "lezz install <tool>", "Download and install a managed tool", true},
+	{"tools", "lezz tools upgrade [tool...]", "Upgrade managed tools to their latest GitHub releases", false},
+	{"tools upgrade", "lezz tools upgrade [tool...]", "Upgrade managed tools to their latest GitHub releases", true},
 	{"purge", "lezz purge", "Remove services, binaries, and Go caches for all managed tools", true},
-	{"update", "lezz update", "Check for and apply lezz self-update", true},
+	{"update", "lezz update", "Update lezz and all managed tools", true},
 	{"service", "lezz service install|remove|list|purge", "Configure launchd services for managed tools", false},
-	{"service install", "lezz service install <tool>", "Configure launchd service for a tool", true},
+	{"service install", "lezz service install [--force] <tool> [profile]", "Install a launchd service for a tool, refusing a port another process owns", true},
 	{"service remove", "lezz service remove <tool>", "Remove daemon config for a tool", true},
 	{"service list", "lezz service list", "List all installed lezz services", true},
 	{"service purge", "lezz service purge", "Unload and remove all lezz services", true},
@@ -1857,7 +2271,7 @@ func printCommandUsage(w io.Writer, path string, fs *flag.FlagSet) {
 	usageLine := "lezz " + path
 	derived := true
 	if doc, ok := lookupCommand(path); ok {
-		fmt.Fprintf(w, "%s — %s\n\n", usageLine, doc.synopsis)
+		_, _ = fmt.Fprintf(w, "%s — %s\n\n", usageLine, doc.synopsis)
 		// A doc for this exact path knows its arguments; a parent's display
 		// line names the sibling actions instead.
 		if doc.path == path {
@@ -1869,19 +2283,19 @@ func printCommandUsage(w io.Writer, path string, fs *flag.FlagSet) {
 	if fs != nil {
 		fs.VisitAll(func(*flag.Flag) { flags++ })
 	}
-	fmt.Fprintf(w, "Usage:\n  %s", usageLine)
+	_, _ = fmt.Fprintf(w, "Usage:\n  %s", usageLine)
 	if flags > 0 && derived {
-		fmt.Fprint(w, " [flags]")
+		_, _ = fmt.Fprint(w, " [flags]")
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if flags > 0 {
 		out := fs.Output()
 		fs.SetOutput(w)
-		fmt.Fprintln(w, "\nFlags:")
+		_, _ = fmt.Fprintln(w, "\nFlags:")
 		fs.PrintDefaults()
 		fs.SetOutput(out)
 	}
-	fmt.Fprintln(w, "\nRun 'lezz --help' for the full command list.")
+	_, _ = fmt.Fprintln(w, "\nRun 'lezz --help' for the full command list.")
 }
 
 func usage() {
@@ -1889,14 +2303,14 @@ func usage() {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, "lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner\n\nUsage:\n")
+	_, _ = fmt.Fprint(w, "lezz — self-updating host for adhd, ocd-smoke-alarm, and tuner\n\nUsage:\n")
 	for _, d := range commandDocs {
 		if !d.listed {
 			continue
 		}
-		fmt.Fprintf(w, "  %-*s  %s\n", usageWidth, d.display, d.synopsis)
+		_, _ = fmt.Fprintf(w, "  %-*s  %s\n", usageWidth, d.display, d.synopsis)
 	}
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, `
 Managed tools: lezz, adhd, ocd-smoke-alarm, tuner
 
 Every command accepts -h/--help and prints its usage instead of running:

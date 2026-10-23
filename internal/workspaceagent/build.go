@@ -84,20 +84,20 @@ func Build(ctx context.Context, opts Options) (string, error) {
 		}
 		return "", err
 	}
-	if _, err := exec.LookPath("go"); err != nil {
+	if _, lookErr := exec.LookPath("go"); lookErr != nil {
 		return "", errors.New("workspace-agent build requires the go toolchain on PATH")
 	}
-	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
-		return "", fmt.Errorf("create bin dir: %w", err)
+	if mkErr := os.MkdirAll(filepath.Dir(out), 0o750); mkErr != nil {
+		return "", fmt.Errorf("create bin dir: %w", mkErr)
 	}
 
 	logf(opts.Stderr, "workspace-agent: building from %s", module)
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", out, "./cmd/workspace-agent")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", out, "./cmd/workspace-agent") //nolint:gosec // out is a resolved path under the managed bin dir
 	cmd.Dir = module
 	cmd.Stdout = writer(opts.Stdout)
 	cmd.Stderr = writer(opts.Stderr)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build workspace-agent in %s: %w", module, err)
+	if runErr := cmd.Run(); runErr != nil {
+		return "", fmt.Errorf("build workspace-agent in %s: %w", module, runErr)
 	}
 	info, err := os.Stat(out)
 	if err != nil {
@@ -190,7 +190,7 @@ func syncRepo(ctx context.Context, dir string, stderr io.Writer) error {
 			return fmt.Errorf("create source dir: %w", err)
 		}
 		logf(stderr, "workspace-agent: cloning %s", RepoURL)
-		cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", RepoURL, dir)
+		cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", RepoURL, dir) //nolint:gosec // dir is the managed source cache, not caller input
 		cmd.Stdout = writer(stderr)
 		cmd.Stderr = writer(stderr)
 		if err := cmd.Run(); err != nil {
@@ -199,13 +199,13 @@ func syncRepo(ctx context.Context, dir string, stderr io.Writer) error {
 		return nil
 	}
 	logf(stderr, "workspace-agent: updating %s", dir)
-	fetch := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--depth", "1", "origin")
+	fetch := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--depth", "1", "origin") //nolint:gosec // dir is the managed source cache
 	fetch.Stdout = writer(stderr)
 	fetch.Stderr = writer(stderr)
 	if err := fetch.Run(); err != nil {
 		return fmt.Errorf("fetch workspace-agent source: %w", err)
 	}
-	reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", "FETCH_HEAD")
+	reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", "FETCH_HEAD") //nolint:gosec // dir is the managed source cache
 	reset.Stdout = writer(stderr)
 	reset.Stderr = writer(stderr)
 	if err := reset.Run(); err != nil {
@@ -229,10 +229,10 @@ func findModule(source string) (string, error) {
 }
 
 func hasModule(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil { //nolint:gosec // read-only probe of a user-supplied source dir
 		return false
 	}
-	info, err := os.Stat(filepath.Join(dir, "cmd", "workspace-agent"))
+	info, err := os.Stat(filepath.Join(dir, "cmd", "workspace-agent")) //nolint:gosec // read-only probe of a user-supplied source dir
 	return err == nil && info.IsDir()
 }
 
@@ -262,7 +262,7 @@ func SourceRevision(source string) string {
 	}
 	repo := module
 	for {
-		if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
+		if _, statErr := os.Stat(filepath.Join(repo, ".git")); statErr == nil {
 			break
 		}
 		parent := filepath.Dir(repo)
@@ -271,7 +271,7 @@ func SourceRevision(source string) string {
 		}
 		repo = parent
 	}
-	out, err := exec.Command("git", "-C", repo, "rev-parse", "--short", "HEAD").Output()
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "--short", "HEAD").Output() //nolint:gosec // repo is the source checkout found above
 	if err != nil {
 		return ""
 	}

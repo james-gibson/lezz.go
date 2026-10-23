@@ -23,7 +23,7 @@ builds:
 
 archives:
   - id: lezz
-    builds: [lezz]
+    ids: [lezz]
     # go-selfupdate matches assets by suffix: {os}_{arch}.tar.gz / .zip
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:

@@ -67,6 +67,27 @@ seed        lezz seed init --auth-ref keychain:LEZZ_GITHUB_TOKEN
 `--no-browser` prints the URL only. `--scopes` defaults to `read:user`; do not
 request `repo` unless a feature actually needs it.
 
+## Downloads
+
+`lezz install` and `lezz update` call `api.github.com` for release metadata and
+then download the asset. The credential order is:
+
+1. the token `lezz auth github` stored — the one the embedded client ID minted;
+2. nothing: an anonymous request (60 requests/hour per IP, public repos only).
+
+`$GITHUB_TOKEN` is never consulted, even when exported. A stale or unrelated
+personal access token used to turn every public download into a 401, and
+`lezz install` treated that as "no release" and quietly fell back to
+`go install` — reporting `latest` instead of a version (james-gibson/lezz.go#36).
+
+Signing in is not required for public repositories. It is worth doing on a
+shared IP (CI, an office NAT) where the anonymous budget is already spent, and
+it is required for private repositories: those need `--scopes repo`, which the
+default `read:user` does not grant.
+
+To use a different credential, sign in again — `lezz auth logout` then
+`lezz auth github`. There is no separate token variable to set.
+
 ## Check and remove
 
 ```sh
@@ -118,8 +139,10 @@ encrypted store; prefer Keychain where available.
 - **Not yet app-bound.** The item is a normal login-keychain generic password.
   A future native helper can bind it to the Lezz.app code signature and require
   user presence.
-- **Scopes.** `read:user` only. The token is not used for repo operations; the
-  queue/cache paths still use `gh` or their own credentials.
+- **Scopes.** `read:user` only. The token authenticates release downloads
+  (`lezz install`, `lezz update`) against the 5,000 requests/hour authenticated
+  budget instead of the anonymous 60; the queue/cache paths still use `gh` or
+  their own credentials.
 - **Revocation.** `lezz auth logout` removes the local copy. Revoke the grant in
   GitHub → Settings → Applications if the token may have leaked.
 
