@@ -476,7 +476,7 @@ func RunAuto(ctx context.Context) error {
 	for _, note := range adhdNotes {
 		fmt.Printf("adhd: %s\n", note)
 	}
-	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath)
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, nil)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}

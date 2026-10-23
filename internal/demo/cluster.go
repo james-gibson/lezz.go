@@ -24,22 +24,32 @@ import (
 // redirected to logFile. Unlike tools.Start, the terminal is not polluted by
 // child process output (TUI escape codes, color sequences, etc.).
 func startProcess(name string, args []string, logFile string) (*exec.Cmd, error) {
+	return startProcessEnv(name, args, logFile, nil)
+}
+
+// startProcessEnv is startProcess with a transient environment applied to the
+// child. The variables last for that process's lifetime, which for a
+// generation is exactly the scope a skill is supposed to have.
+func startProcessEnv(name string, args []string, logFile string, env []string) (*exec.Cmd, error) {
 	binary, err := tools.Find(name)
 	if err != nil {
 		return nil, err
 	}
-	return startBinary(binary, args, logFile)
+	return startBinary(binary, args, logFile, env)
 }
 
 // startBinary is startProcess for a binary that has already been resolved, so
 // the process that runs is the one that was checked.
-func startBinary(binary string, args []string, logFile string) (*exec.Cmd, error) {
+func startBinary(binary string, args []string, logFile string, env []string) (*exec.Cmd, error) {
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // logFile is constructed from a temp dir under our control
 	if err != nil {
 		return nil, fmt.Errorf("open log file %s: %w", logFile, err)
 	}
 
 	cmd := exec.Command(binary, args...) //nolint:gosec // binary path is resolved via tools.Find()
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = f
 	cmd.Stderr = f
 	if err := cmd.Start(); err != nil {
@@ -482,7 +492,7 @@ func Run(ctx context.Context, opts Options) error {
 	for _, note := range adhdNotes {
 		fmt.Printf("adhd: %s\n", note)
 	}
-	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath)
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, nil)
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}

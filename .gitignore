@@ -35,6 +35,9 @@ go.work.sum
 /main
 /bin/
 
+# local project seed written by `lezz seed init` (contains a per-machine id)
+/seed.json
+
 # goreleaser output: `release --snapshot` writes six archives (~100 MB) here
 /dist/
 

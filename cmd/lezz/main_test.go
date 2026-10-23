@@ -103,6 +103,7 @@ func TestLookupCommand(t *testing.T) {
 		want string
 	}{
 		{"demo", "demo"},
+		{"prod", "prod"},
 		{"app", "app"},
 		{"app install", "app install"},
 		{"service purge", "service purge"},

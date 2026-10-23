@@ -26,6 +26,11 @@ var Registry = []Tool{
 				Description: "self-contained demo cluster — 2 smoke-alarm instances + adhd headless",
 				Args:        []string{"demo"},
 			},
+			{
+				Name:        "prod",
+				Description: "prod cluster — mirrored alarm_a + invisible fallback, three nodes, anchor registry on 19100",
+				Args:        []string{"prod"},
+			},
 		},
 	},
 	{

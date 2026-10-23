@@ -86,6 +86,10 @@ func main() {
 		cmdAuto(ctx)
 		cancel()
 
+	case "prod":
+		cmdProd(ctx)
+		cancel()
+
 	case "queue":
 		cmdQueue(ctx)
 		cancel()
@@ -367,6 +371,32 @@ func cmdAuto(ctx context.Context) {
 	}
 	if err := demo.RunAuto(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "auto:", err)
+		os.Exit(1)
+	}
+}
+
+// lezz prod [--isotope NAME] [--base-port N] [--rotate]
+// Launches a production-shaped cluster: three full nodes (A, B, C), each an
+// alarm plus a headless adhd, with node A's registry as the anchor on 19100.
+// SIGHUP (or --rotate) installs the next generation as a launchd service and
+// hands the fixed ports over to it.
+func cmdProd(ctx context.Context) {
+	// A requested help goes to stdout like every other command; a parse error
+	// still prints to stderr, where the caller's own message is.
+	help := os.Stderr
+	if helpRequested(os.Args[2:]) {
+		help = os.Stdout
+	}
+	opts, err := demo.ParseProdArgs(os.Args[2:], help)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "prod:", err)
+		os.Exit(2)
+	}
+	if err := demo.RunProd(ctx, opts); err != nil {
+		fmt.Fprintln(os.Stderr, "prod:", err)
 		os.Exit(1)
 	}
 }
@@ -2157,6 +2187,7 @@ var commandDocs = []commandDoc{
 	{"demo status", "lezz demo status", "Show a running demo cluster and probe its endpoints", true},
 	{"demo restart", "lezz demo restart [flags]", "Restart the demo cluster, reusing the same ports when free", true},
 	{"auto", "lezz auto", "Launch a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry", true},
+	{"prod", "lezz prod [flags]", "Launch a prod cluster — mirrored alarm_a, invisible fallback; SIGHUP rotates it as a launchd service", true},
 	{"queue", "lezz queue [--config file]", "Run a spool + FIFO queue sidecar for a rate-limited upstream", true},
 	{"cache", "lezz cache [--config file]", "Serve a read-through cache of GitHub PR view/diff data", true},
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},

@@ -31,6 +31,7 @@ receipt, a honeypot contact. Model: `kb/scripts/lab/PLANE.md`. Figures:
 lezz demo                              # start a self-contained cluster (foreground)
 lezz demo start|stop|status|restart    # detached lifecycle; stable ports
 lezz auto                              # start a base cluster — empty and awaiting, auto-installs tools, reuses an existing registry
+lezz prod --isotope NAME               # two logical alarms (mirrored A + fallback), three nodes; SIGHUP rotates it as a launchd service
 
 # Tool lifecycle
 lezz install <tool>                    # download and install a managed tool
@@ -288,6 +289,91 @@ in-process. Revisit when the facade exposes federation.
 
 ---
 
+## lezz prod
+
+`lezz prod` is the production shape: **two logical alarms, three physical
+nodes**. A dashboard arms against `alarm_a` and falls back to `alarm_b`; it is
+not told that `alarm_a` is mirrored, or that `alarm_b` is a third node.
+
+| client view | physical | ports |
+| --- | --- | --- |
+| `alarm_a` | `alarm-a-a` (primary, owns the registry) | `:19200`, adhd `:19210` |
+| `alarm_a` | `alarm-a-b` (mirror, same federation cluster) | `:19201`, adhd `:19211` |
+| `alarm_b` | `alarm-c` (never named "c" to a client) | `:19202`, adhd `:19212` |
+| registry | anchor on the primary A node | `:19100/cluster` |
+
+Ports are fixed rather than random, so a rotated generation is reachable at the
+same endpoints as the one it replaces.
+
+```sh
+lezz prod --isotope lab-42
+```
+
+- `--isotope NAME` is the cluster identity. It is the registry name, the
+  isotope records (`NAME`, `NAME-a`, `NAME-b` — never `NAME-c`), and the
+  identity a rotated child inherits, so peers do not see a trust reset.
+- `--base-port N` moves the node block (default `19200`); the anchor port does
+  not move.
+- The A pair federates (`cluster_id`, shared slot range): the first to bind
+  claims the introducer slot, the other follows and reports to it. C does not
+  federate; it is the fallback role.
+- All three alarms run with `remote_agent.managed_updates: true` and start with
+  `targets: []` — targets arrive at runtime. Nothing in a client's view names
+  the mirror or C.
+- Every adhd is configured with exactly `alarm_a` and `alarm_b`, in that order.
+
+### Rotation
+
+`SIGHUP` (or `--rotate`) installs the next generation as a launchd service and
+hands the fixed ports over to it:
+
+```sh
+kill -HUP $(pgrep -f 'lezz prod --isotope lab-42')
+# installed generation g1 as launchd service co.james-gibson.lab.lezz.prod-g1
+# handoff complete: lab-42 is serving generation g1
+```
+
+The child is defined with `--child` and waits for every fixed port — registry,
+alarms, adhd MCP servers and federation slots — before binding, so the parent
+can drain in place. The handoff is only declared complete when the child's
+registry answers **and** `alarm_a` passes `/healthz`. Each generation removes
+the definition of the one it replaced; `launchctl list | grep lezz.prod` shows
+exactly one.
+
+### Fuzzing the prod core
+
+The command has a deliberately pure core — option validation, the topology
+plan, the argv a rotated child is installed with, and the config templates.
+Those are fuzzed without starting anything:
+
+```sh
+go test ./internal/demo -run=^$ -fuzz='^FuzzBuildProdPlan$'      -fuzztime=60s
+go test ./internal/demo -run=^$ -fuzz='^FuzzParseProdArgs$'      -fuzztime=60s
+go test ./internal/demo -run=^$ -fuzz='^FuzzProdChildRoundTrip$' -fuzztime=60s
+go test ./internal/demo -run=^$ -fuzz='^FuzzProdTemplates$'      -fuzztime=60s
+go test ./internal/demo -run=^$ -fuzz='^FuzzProdPortLayout$'     -fuzztime=60s
+go test ./internal/demo -run=^$ -fuzz='^FuzzProdOptionsNormalized$' -fuzztime=60s
+```
+
+| target | property |
+| --- | --- |
+| `FuzzBuildProdPlan` | registry advertises exactly four fields and no `alarm_c`; A pair federates, fallback does not; isotope records are logical only |
+| `FuzzProdTemplates` | both configs are valid YAML; targets stay empty; remote management is on; a client sees exactly `alarm_a` then `alarm_b` |
+| `FuzzParseProdArgs` | an accepted argument set is always normalizable (no out-of-range port, no bad isotope) |
+| `FuzzProdChildRoundTrip` | the child argv preserves isotope and base port, advances only the generation, and sets `--child` |
+| `FuzzProdPortLayout` | nine distinct ports; no derived port collides with `19100` |
+| `FuzzProdOptionsNormalized` | accepted isotopes match the grammar; normalization is idempotent |
+
+`FuzzProdPortLayout` already paid for itself: `--base-port 19000` put a
+federation slot on `19100`, so the cluster could never start. The base port is
+now rejected when its derived block collides with the anchor, and the failing
+input is kept as `internal/demo/testdata/fuzz/FuzzProdPortLayout/`.
+
+Nothing that binds a port, spawns a process, writes a plist or calls
+`launchctl` is reachable from a fuzz target — a fuzz target must not be able to
+start a cluster.
+
+---
 ## lezz sea
 
 Launch the [lezz.sea](https://github.com/james-gibson/lezz.sea) dashboard. When
