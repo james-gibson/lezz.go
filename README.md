@@ -54,6 +54,11 @@ lezz app open [-- args...]             # launch via LaunchServices (default: aut
 lezz app info                          # show bundle identity and signature
 lezz app uninstall [--force]           # remove Lezz.app
 
+# lezz.sea dashboard (signed dev release)
+lezz sea                               # launch it, installing it if missing
+lezz sea --check                       # show the installed build and whether it verifies
+lezz sea --install                     # install or update without launching
+
 # GitHub device-flow auth (quick path; token in keychain)
 lezz auth github                       # sign in with a GitHub OAuth App
 lezz auth status                       # verify the stored GitHub identity
@@ -261,6 +266,45 @@ never join the mesh. `auto` therefore keeps spawning
 in-process. Revisit when the facade exposes federation.
 
 ---
+
+## lezz sea
+
+Launch the [lezz.sea](https://github.com/james-gibson/lezz.sea) dashboard. When
+the app is already installed, this is just `open -a`: no network, no update.
+
+```sh
+lezz sea                 # launch; install from the dev release if missing
+lezz sea --install       # install or update, do not launch
+lezz sea --check         # what is installed, and does it verify
+lezz sea --force         # reinstall over a verified copy
+```
+
+The dashboard is published as a signed macOS bundle on the `dev` prerelease of
+`james-gibson/lezz.sea`. An install goes through every check below, in this
+order, and nothing is unpacked or installed until the previous one passes:
+
+1. **HTTPS to an allowlist.** `github.com` and GitHub's asset hosts only, and
+   every redirect is checked too — a redirect cannot move the download to a new
+   origin or downgrade it to HTTP.
+2. **SHA-256 against the published manifest** (`dev.json`). This rejects a
+   truncated or substituted body before it is ever read as an archive.
+3. **Apple's signature on the unpacked bundle**: `codesign --verify --deep
+   --strict`, authority `Developer ID Application: James Gibson (288ZTJGXX9)`,
+   team `288ZTJGXX9`, hardened runtime, secure timestamp. The signature — not
+   the checksum — is the trust anchor, because the checksum comes from the same
+   origin as the archive while the signature comes from Apple's chain.
+4. **Notarization**: a stapled ticket plus a Gatekeeper assessment of
+   `accepted / Notarized Developer ID`.
+
+A signed build with no notarization ticket is refused, because macOS would block
+its first launch anyway. `--allow-unnotarized` installs one deliberately (it
+warns); it exists for the window before a notarized build is published and
+should not be scripted against.
+
+Installing is a staged copy plus a rename into `~/Applications`, never an
+in-place overwrite, and it refuses to replace a running copy. The loopback
+dashboard shows exactly the cluster it is told about — `lezz sea` only decides
+which bundle runs.
 
 ## lezz agent
 

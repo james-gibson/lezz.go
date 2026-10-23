@@ -29,6 +29,7 @@ import (
 	"github.com/james-gibson/lezz.go/internal/githubauth"
 	"github.com/james-gibson/lezz.go/internal/mcpwrapper"
 	"github.com/james-gibson/lezz.go/internal/queue"
+	"github.com/james-gibson/lezz.go/internal/sea"
 	"github.com/james-gibson/lezz.go/internal/seed"
 	"github.com/james-gibson/lezz.go/internal/selfupdate"
 	"github.com/james-gibson/lezz.go/internal/service"
@@ -107,6 +108,10 @@ func main() {
 
 	case "see":
 		cmdSee(ctx)
+		cancel()
+
+	case "sea":
+		cmdSea(ctx)
 		cancel()
 
 	case "debug":
@@ -1774,6 +1779,77 @@ func normalizeArgs(argv []string) []string {
 	return out
 }
 
+// lezz sea [--install] [--check] [--force] [--allow-unnotarized] [--channel dev]
+//
+// Launches the lezz.sea dashboard. When the app is missing it is downloaded
+// from the signed dev release and verified before anything is launched: the
+// archive's SHA-256, then the bundle's Developer ID signature, team, hardened
+// runtime, secure timestamp and notarization ticket. Nothing in that path
+// trusts the download — the signature is the trust anchor, and a build that
+// fails it is refused rather than installed.
+func cmdSea(ctx context.Context) {
+	fs := flag.NewFlagSet("sea", flag.ContinueOnError)
+	installOnly := fs.Bool("install", false, "install or update without launching")
+	check := fs.Bool("check", false, "report what is installed and exit")
+	force := fs.Bool("force", false, "reinstall even when a verified copy is installed")
+	allowUnnotarized := fs.Bool("allow-unnotarized", false, "install a signed build with no notarization ticket (dev only)")
+	channel := fs.String("channel", sea.Channel, "release channel to install from")
+	if !parseOrHelp(fs, os.Args[2:]) {
+		return
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "sea: unexpected argument %q\n", fs.Args()[0])
+		printCommandUsage(os.Stderr, "sea", nil)
+		os.Exit(1)
+	}
+	if runtime.GOOS != "darwin" {
+		fmt.Fprintln(os.Stderr, "sea: lezz.sea is a macOS application; this host is "+runtime.GOOS)
+		os.Exit(1)
+	}
+
+	if *check {
+		path, ok := sea.Installed("")
+		if !ok {
+			fmt.Printf("%s is not installed\n", sea.AppName)
+			return
+		}
+		info, err := sea.Inspect(ctx, path, *allowUnnotarized)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sea: %s does not verify: %v\n", path, err)
+			os.Exit(1)
+		}
+		fmt.Printf("installed %s\n", info.Path)
+		fmt.Printf("  version   %s (%s)\n", info.Version, info.Build)
+		fmt.Printf("  signature %s\n", info.Authority)
+		fmt.Printf("  team      %s\n", info.TeamID)
+		fmt.Printf("  notarized %t\n", info.Notarized)
+		return
+	}
+
+	res, err := sea.Ensure(ctx, sea.Options{
+		Channel:          *channel,
+		Force:            *force,
+		AllowUnnotarized: *allowUnnotarized,
+		Log:              func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sea:", err)
+		os.Exit(1)
+	}
+	if res.Downloaded {
+		fmt.Printf("installed %s %s (%s)\n", sea.AppName, res.Version, res.Build)
+	}
+	if *installOnly {
+		fmt.Printf("  %s\n", res.Path)
+		return
+	}
+	if err := appbundle.Launch(res.Path, nil, false, false); err != nil {
+		fmt.Fprintln(os.Stderr, "sea:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("launched %s\n", res.Path)
+}
+
 // lezz app install|open|info|uninstall
 // Wraps the lezz binary in a macOS .app so macOS has a stable identity for TCC
 // permissions and passkeys. The app defaults to the base cluster.
@@ -2086,6 +2162,7 @@ var commandDocs = []commandDoc{
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},
 	{"seed init", "lezz seed init [--surface base]", "Create seed.json (project id, surface, auth ref)", true},
 	{"see", "lezz see", "Read seed.json, show the 42i start and surface", true},
+	{"sea", "lezz sea [--install|--check]", "Launch lezz.sea, installing it from the signed dev release when missing", true},
 	{"debug", "lezz debug keygen|lease|fetch-keys", "Debug lease keys and signing", true},
 	{"anon", "lezz anon [--lease FILE] [--listen host:port]", "Serve the anonymous MCP surface (empty tool list); the debug socket needs a valid lease", true},
 	{"app", "lezz app install|open|info|uninstall", "Wrap the lezz binary in a macOS .app: a stable identity for TCC permissions and passkeys", false},
