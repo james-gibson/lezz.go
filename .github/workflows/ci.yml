@@ -77,3 +77,24 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build -o /dev/null ./cmd/lezz
+
+  # `goreleaser check` is the cheap way to validate .goreleaser.yml, but it only
+  # ran inside the release workflow, which triggers on a `v*` tag — so an
+  # invalid or deprecated key could sit on main until somebody remembered to run
+  # it by hand. That is exactly how #40's `archives.builds` survived a major
+  # version: the config was valid when written and deprecated by v2.
+  #
+  # This job is a parse, not a build: seconds, no cross-compilation, and it
+  # tracks the same `~> v2` range the release workflow resolves, so a new v2
+  # deprecation fails here before it can reach a tag.
+  release-config:
+    name: Validate release config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
