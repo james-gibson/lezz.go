@@ -1,14 +1,96 @@
 name: Release
 
+# Two entry points, one pipeline:
+#
+#   * push a `v*` tag     — the tag already exists, `prepare` only resolves it.
+#   * workflow_dispatch   — `prepare` validates the version, creates and pushes
+#                           the tag, then the same jobs run against it.
+#
+# The manual path must stay in this workflow. A tag pushed by the dispatch
+# would not re-trigger this file, because GitHub does not start a run for refs
+# pushed with the repository's own GITHUB_TOKEN — so a separate "tagging"
+# workflow would hand off to nothing and report success having released
+# nothing. Threading the created tag through `prepare` keeps one publisher and
+# one source of truth for what a release contains.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to tag and release, e.g. v0.16.0. Must not exist yet.'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+# One release per version at a time: a dispatch and a tag push for the same
+# version must not race to create two releases (releases here are immutable).
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # 0. Resolve the version. On a tag push the tag is the input; on a manual
+  #    dispatch it is created here, so every later job has a real tag to check
+  #    out and attach the release to.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve or create the tag
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${REQUESTED_VERSION}" ]; then
+            # Tag-push path: the ref is the version.
+            echo "tag=${REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Manual path. Releases are cut from main only — dispatching a release
+          # from a feature branch would publish code that never merged.
+          if [ "${REF}" != "refs/heads/main" ]; then
+            echo "::error::a manual release must be dispatched from main, got ${REF}"
+            exit 1
+          fi
+
+          # Shape first, so a typo cannot create a tag that breaks the
+          # goreleaser version template or the `v*` trigger.
+          if ! [[ "${REQUESTED_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'${REQUESTED_VERSION}' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+
+          # Releases are immutable: never move or overwrite an existing tag.
+          if git ls-remote --exit-code --tags origin "refs/tags/${REQUESTED_VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag ${REQUESTED_VERSION} already exists on origin"
+            exit 1
+          fi
+
+          # Annotated, so the tag carries the release's message and author.
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "${REQUESTED_VERSION}" -m "Release ${REQUESTED_VERSION}"
+          git push origin "refs/tags/${REQUESTED_VERSION}"
+
+          echo "tag=${REQUESTED_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Created and pushed tag ${REQUESTED_VERSION} on $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
   # ---------------------------------------------------------------------------
   # 1. Binaries. Goreleaser builds and archives every advertised target but does
   #    not publish: releases here are immutable, so there must be exactly one
@@ -16,6 +98,7 @@ jobs:
   # ---------------------------------------------------------------------------
   binaries:
     name: Binaries
+    needs: prepare
     runs-on: ubuntu-latest
     env:
       LEZZ_GITHUB_CLIENT_ID: ${{ vars.LEZZ_GITHUB_CLIENT_ID }}
@@ -23,6 +106,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - uses: actions/setup-go@v5
         with:
@@ -132,9 +216,11 @@ jobs:
   # ---------------------------------------------------------------------------
   images:
     name: Images and OTA
+    needs: prepare
     uses: ./.github/workflows/release-ota.yml
     with:
-      environment: ${{ github.ref_name }}
+      environment: ${{ needs.prepare.outputs.tag }}
+      ref: ${{ needs.prepare.outputs.tag }}
 
   # ---------------------------------------------------------------------------
   # 3. One publisher. Downloads every artifact from this run and creates the
@@ -142,7 +228,7 @@ jobs:
   # ---------------------------------------------------------------------------
   publish:
     name: Publish release
-    needs: [binaries, images]
+    needs: [prepare, binaries, images]
     runs-on: ubuntu-latest
     steps:
       - name: Collect artifacts
@@ -157,7 +243,7 @@ jobs:
 
       - name: Describe the image assets
         env:
-          APP_ENV: ${{ github.ref_name }}
+          APP_ENV: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -240,6 +326,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
           files: dist/*
           generate_release_notes: true
           body_path: release-body.md
