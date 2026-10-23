@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="description" content="{{.Description}}">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:description" content="{{.Description}}">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="{{.Base}}assets/style.css">
+</head>
+<body class="{{.BodyClass}}">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <a class="brand" href="{{.Base}}">lezz<span>·go</span></a>
+  <nav class="site-nav">
+    <a href="{{.Base}}docs/app.html">Docs</a>
+    <a href="{{.RepoURL}}">GitHub</a>
+    <a class="button small" href="{{.SeaRelease}}">Get lezz.sea</a>
+  </nav>
+</header>
+
+<main id="main">
+{{if eq .BodyClass "docs"}}
+  <div class="docs-shell">
+    <aside class="docs-nav" aria-label="Documentation">
+      {{range .Sections}}
+      <p class="nav-heading">{{.Name}}</p>
+      <ul>
+        {{range .Items}}
+        <li><a href="{{.URL}}"{{if $.IsCurrent .URL}} aria-current="page"{{end}}>{{.Title}}</a></li>
+        {{end}}
+      </ul>
+      {{end}}
+    </aside>
+    <article class="prose">{{.Content}}</article>
+  </div>
+{{else}}
+  <div class="landing">{{.Content}}</div>
+{{end}}
+</main>
+
+<footer class="site-footer">
+  <p>
+    lezz is built in the open at <a href="{{.RepoURL}}">james-gibson/lezz.go</a>.
+    The dashboard is <a href="{{.SeaURL}}">lezz.sea</a>.
+  </p>
+  <p class="muted">Docs rendered from the repository at <code>{{.Version}}</code>.</p>
+</footer>
+</body>
+</html>

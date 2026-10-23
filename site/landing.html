@@ -1,0 +1,118 @@
+<section class="hero">
+  <p class="eyebrow">the lab orchestrator</p>
+  <h1>The lab assembles itself.</h1>
+  <p class="lede">
+    <strong>lezz</strong> is the orchestration layer for a working prototype lab. It installs
+    the other tools and keeps them current, brings a whole cluster up with one command, and
+    gives every caller a trust rung you can measure rather than assume.
+  </p>
+  <div class="actions">
+    <a class="button" href="{{.SeaRelease}}">Download lezz.sea for macOS</a>
+    <a class="button ghost" href="{{.Base}}docs/app.html">Read the docs</a>
+  </div>
+  <p class="fineprint">
+    macOS 14 or later. The dashboard is an early build, published on the
+    <code>dev</code> channel.
+  </p>
+</section>
+
+<section class="showcase">
+  <figure>
+    <img src="{{.Base}}assets/lights.png" width="1120" height="720"
+         alt="lezz.sea showing adhd lights as green and red rows, each with its instance name and trust rung">
+    <figcaption>Lights, with the trust rung that admits each one.</figcaption>
+  </figure>
+</section>
+
+<section class="split">
+  <div>
+    <p class="eyebrow">companion app</p>
+    <h2>Watch the lab, not a log file.</h2>
+    <p>
+      <strong>lezz.sea</strong> is a small macOS app for watching an
+      <a href="https://github.com/james-gibson/adhd">adhd</a> cluster: the lights it reports,
+      and the MCP traffic it logs, live.
+    </p>
+    <ul class="checklist">
+      <li><strong>Lights.</strong> Green, red, yellow, dark — with the instance name and its
+        42i trust rung, refreshed on an interval you set.</li>
+      <li><strong>Events.</strong> One row per request, response, and light update, filterable
+        and searchable, with the raw JSONL line on the context menu.</li>
+      <li><strong>Discovery.</strong> Reads the lezz cluster registry, probes the default adhd
+        endpoint, and watches Bonjour for the isotope service.</li>
+      <li><strong>Drop targets.</strong> Drop a <code>.jsonl</code> log to stream it, or a
+        config naming a server to add its cluster.</li>
+    </ul>
+    <div class="actions">
+      <a class="button" href="{{.SeaRelease}}">Get the dev build</a>
+      <a class="button ghost" href="{{.SeaURL}}">Source</a>
+    </div>
+    <p class="fineprint">
+      Signed and notarized on the maintainer's machine, with a cert-free CI workflow verifying
+      what was published. <code>dev.json</code> records the build, commit, team and checksum
+      that are live.
+    </p>
+  </div>
+  <figure>
+    <img src="{{.Base}}assets/events.png" width="1120" height="720"
+         alt="lezz.sea showing a filterable list of MCP requests and responses with timings">
+    <figcaption>MCP traffic, as it happens.</figcaption>
+  </figure>
+</section>
+
+<section class="cards">
+  <div class="card">
+    <h3>Tools that stay current</h3>
+    <p>
+      <code>lezz install adhd</code> fetches a managed tool from its own release.
+      <code>lezz tools upgrade</code> compares each binary's version with the latest release and
+      reinstalls it when it is older, so nothing in the lab is left to rot.
+    </p>
+  </div>
+  <div class="card">
+    <h3>One command, whole cluster</h3>
+    <p>
+      <code>lezz demo</code> brings up a self-contained cluster on stable ports.
+      <code>lezz auto</code> starts a base cluster that is empty and awaiting peers,
+      installing tools and reusing an existing registry.
+    </p>
+  </div>
+  <div class="card">
+    <h3>Trust after connection</h3>
+    <p>
+      Whether a caller can still be trusted after it connects is a separate question from
+      whether it could connect. Each caller carries a 42i distance that maps to a rung, and a
+      rung limits what it may read.
+      <a href="{{.Base}}docs/surfaces.html">How surfaces and rungs work</a>.
+    </p>
+  </div>
+</section>
+
+<section class="quickstart">
+  <h2>Start here</h2>
+  <pre><code>lezz install adhd     # fetch a managed tool from its own release
+lezz demo             # start a self-contained cluster
+lezz service list     # see what the lab is running</code></pre>
+  <p class="fineprint">
+    Binaries are published as signed and notarized archives for linux, darwin and windows on
+    <a href="{{.Releases}}">the releases page</a>.
+  </p>
+</section>
+
+<section class="docs-teaser">
+  <h2>Documentation</h2>
+  <p class="lede">
+    The docs are written in the repository and published here from the same release tag, so the
+    version you read is the version that shipped.
+  </p>
+  <div class="doc-groups">
+    {{range .Sections}}
+    <div class="doc-group">
+      <h3>{{.Name}}</h3>
+      <ul>
+        {{range .Items}}<li><a href="{{.URL}}">{{.Title}}</a></li>{{end}}
+      </ul>
+    </div>
+    {{end}}
+  </div>
+</section>
