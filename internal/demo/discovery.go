@@ -77,25 +77,55 @@ func (r *registry) list() map[string]ClusterInfo {
 // startDiscoveryServer binds the fixed discovery port and serves the cluster
 // registry. Returns the HTTP server (caller must Shutdown) and any bind error.
 //
-// GET  /cluster          → map[name]ClusterInfo JSON
-// POST /cluster          → register a ClusterInfo (body: ClusterInfo JSON)
-// DELETE /cluster/{name} → deregister by name
+// GET    /cluster          → map[name]ClusterInfo JSON
+// POST   /cluster          → register a ClusterInfo (body: ClusterInfo JSON)
+// DELETE /cluster/{name}   → deregister by name
 func startDiscoveryServer(seed ClusterInfo) (*http.Server, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", DiscoveryPort))
 	if err != nil {
 		return nil, fmt.Errorf("bind discovery port %d: %w", DiscoveryPort, err)
 	}
 
-	reg := newRegistry(seed)
-	mux := http.NewServeMux()
+	srv := &http.Server{
+		Handler:      newDiscoveryMux(newRegistry(seed)),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	return srv, nil
+}
 
-	mux.HandleFunc("/cluster", func(w http.ResponseWriter, r *http.Request) {
+// newDiscoveryMux routes the registry. Both the collection path and its
+// subtree are registered: ServeMux does not match /cluster/{name} to the exact
+// "/cluster" pattern, so a DELETE never reached the handler while only
+// "/cluster" was registered (lezz.go#57).
+func newDiscoveryMux(reg *registry) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cluster", clusterHandler(reg))
+	mux.HandleFunc("/cluster/", clusterHandler(reg))
+	return mux
+}
+
+// clusterHandler serves the registry. The collection path carries GET and POST;
+// the subtree carries DELETE /cluster/{name}.
+func clusterHandler(reg *registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := clusterNameFromPath(r.URL.Path)
+
 		switch r.Method {
 		case http.MethodGet:
+			if name != "" {
+				http.NotFound(w, r)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(reg.list())
 
 		case http.MethodPost:
+			if name != "" {
+				http.NotFound(w, r)
+				return
+			}
 			var info ClusterInfo
 			if err := json.NewDecoder(r.Body).Decode(&info); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -108,29 +138,25 @@ func startDiscoveryServer(seed ClusterInfo) (*http.Server, error) {
 			reg.add(info)
 			w.WriteHeader(http.StatusOK)
 
-		default:
-			// DELETE /cluster/<name>
-			if r.Method == http.MethodDelete {
-				name := strings.TrimPrefix(r.URL.Path, "/cluster/")
-				if name == "" {
-					http.Error(w, "name required", http.StatusBadRequest)
-					return
-				}
-				reg.remove(name)
-				w.WriteHeader(http.StatusOK)
+		case http.MethodDelete:
+			if name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
 				return
 			}
+			reg.remove(name)
+			w.WriteHeader(http.StatusOK)
+
+		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
-
-	srv := &http.Server{
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
 	}
-	go func() { _ = srv.Serve(ln) }()
-	return srv, nil
+}
+
+// clusterNameFromPath returns the {name} segment of /cluster/{name}, or "" for
+// the collection path itself.
+func clusterNameFromPath(path string) string {
+	name := strings.TrimPrefix(path, "/cluster")
+	return strings.TrimPrefix(name, "/")
 }
 
 // joinDiscoveryServer attempts to register info with an existing discovery
