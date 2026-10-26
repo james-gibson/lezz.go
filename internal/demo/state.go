@@ -23,6 +23,14 @@ type Options struct {
 	AlarmAPort int
 	AlarmBPort int
 	ADHDPort   int
+
+	// ADHDBind is the host the adhd MCP surface listens on. Empty keeps the
+	// demo's LAN default (all interfaces, advertised at the outbound IP). A
+	// loopback host binds only loopback and advertises that, so a cluster
+	// fronted by a local gate does not leave the raw adhd reachable on the LAN
+	// as a bypass (lezz.go#58). The alarms keep their all-interfaces bind
+	// either way: their /status is read-only.
+	ADHDBind string
 }
 
 // Ports is the listener set a demo cluster owns.
@@ -137,6 +145,9 @@ func portFree(port int) bool {
 
 // validatePins fails fast when a pinned port is taken or two pins collide.
 func validatePins(opts Options) error {
+	if err := validateADHDBind(opts.ADHDBind); err != nil {
+		return err
+	}
 	pins := []struct {
 		label string
 		port  int
@@ -304,6 +315,9 @@ func StartDetached(ctx context.Context, opts Options) (State, error) {
 	}
 	if opts.ADHDPort > 0 {
 		args = append(args, fmt.Sprintf("--adhd-port=%d", opts.ADHDPort))
+	}
+	if opts.ADHDBind != "" {
+		args = append(args, "--adhd-bind="+opts.ADHDBind)
 	}
 
 	cmd := exec.Command(exe, args...) //nolint:gosec // exe is this binary, resolved via os.Executable

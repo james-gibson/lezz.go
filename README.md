@@ -231,6 +231,25 @@ lezz demo start --alarm-a-port 52100 --alarm-b-port 52101 --adhd-port 52102
 A pinned port that is already in use fails the start instead of quietly moving the
 endpoint.
 
+### Loopback-only clusters
+
+The demo binds adhd's MCP surface on all interfaces by default, because the demo
+is a LAN-discoverable cluster. A cluster fronted by a loopback gate wants the
+opposite: the raw adhd must not be reachable over the LAN, or an unqualified
+caller can skip the gate and use `adhd.gh.run`, `adhd.proxy` or
+`adhd.cluster.join` directly.
+
+```sh
+lezz demo start --adhd-bind 127.0.0.1
+```
+
+The flag takes an IP address. A loopback address binds adhd to loopback only and
+publishes that loopback URL in the discovery registry, so self-join, notify and
+`lezz demo status` all name the endpoint that is actually reachable. adhd's
+advertise-guard override (`--force`) is passed only for a bind that reaches
+beyond loopback, since only that bind needs it. The two alarms keep their
+all-interfaces bind either way: their `/status` is read-only.
+
 Connect the dashboard to a running demo cluster:
 
 ```sh
