@@ -318,9 +318,10 @@ func cmdDemoRestart(ctx context.Context, args []string) {
 
 // demoFlags holds the port pins shared by demo, demo start and demo restart.
 type demoFlags struct {
-	alarmA int
-	alarmB int
-	adhd   int
+	alarmA   int
+	alarmB   int
+	adhd     int
+	adhdBind string
 }
 
 func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
@@ -329,11 +330,12 @@ func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
 	fs.IntVar(&flags.alarmA, "alarm-a-port", 0, "pin the alarm-a health port (default: reuse the last run's port when it is free)")
 	fs.IntVar(&flags.alarmB, "alarm-b-port", 0, "pin the alarm-b health port (default: reuse the last run's port when it is free)")
 	fs.IntVar(&flags.adhd, "adhd-port", 0, "pin the adhd MCP port (default: reuse the last run's port when it is free)")
+	fs.StringVar(&flags.adhdBind, "adhd-bind", "", "host for the adhd MCP listener (default: all interfaces; 127.0.0.1 keeps the raw MCP surface off the LAN)")
 	return fs, flags
 }
 
 func (f *demoFlags) options() demo.Options {
-	return demo.Options{AlarmAPort: f.alarmA, AlarmBPort: f.alarmB, ADHDPort: f.adhd}
+	return demo.Options{AlarmAPort: f.alarmA, AlarmBPort: f.alarmB, ADHDPort: f.adhd, ADHDBind: f.adhdBind}
 }
 
 // noPositional rejects bare arguments after the flags.

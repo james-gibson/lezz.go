@@ -7,16 +7,93 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/james-gibson/lezz.go/internal/tools"
 )
 
-// adhdForce is adhd's advertise-guard override. The demo binds adhd on all
+// adhdForce is adhd's advertise-guard override. The demo's default bind is all
 // interfaces on purpose so the LAN can discover the cluster, and a guard-aware
 // adhd refuses to advertise an unguarded MCP endpoint without it (adhd#15).
+// A loopback bind does not need it and does not pass it (lezz.go#58).
 const adhdForce = "--force"
+
+// demoADHDArgs is the command line the demo starts adhd with. --force is only
+// added for a bind that reaches beyond loopback: that bind is unguarded, and a
+// guard-aware adhd refuses to advertise it without the override (adhd#15). A
+// loopback bind needs no override because nothing off-host can reach it.
+func demoADHDArgs(configPath, logPath string, listener adhdListener, smokeAlarmURL string) []string {
+	args := []string{
+		"--headless",
+		"--config", configPath,
+		"--log", logPath,
+		"--mcp-addr", listener.Addr,
+		"--smoke-alarm", smokeAlarmURL,
+	}
+	if listener.Force {
+		args = append(args, adhdForce)
+	}
+	return args
+}
+
+// adhdListener is where the demo's adhd MCP surface listens and how the cluster
+// should reach it. Addr is the adhd --mcp-addr value; Host is a dialable host
+// for the MCP URL, the readiness probe, and the discovery registry entry.
+type adhdListener struct {
+	Addr  string
+	Host  string
+	Force bool // pass --force: the bind is reachable beyond loopback
+}
+
+// mcpURL is the adhd MCP endpoint the cluster advertises for this listener.
+func (l adhdListener) mcpURL(port int) string {
+	return fmt.Sprintf("http://%s/mcp", net.JoinHostPort(l.Host, strconv.Itoa(port)))
+}
+
+// validateADHDBind rejects a bind request that is not an IP address, before any
+// listener or child process exists.
+func validateADHDBind(bind string) error {
+	if bind == "" {
+		return nil
+	}
+	if net.ParseIP(bind) == nil {
+		return fmt.Errorf("invalid --adhd-bind %q: give an IP address (for example 127.0.0.1)", bind)
+	}
+	return nil
+}
+
+// resolveADHDListener maps the --adhd-bind host onto the adhd listener and the
+// host the cluster advertises.
+//
+//   - empty: bind all interfaces and advertise the outbound IP — the LAN demo,
+//     which needs --force because the endpoint is unguarded (adhd#15);
+//   - loopback: bind only loopback and advertise it as-is, with no --force, so
+//     the raw adhd is not a LAN bypass around a cluster's gate (lezz.go#58);
+//   - an unspecified address: all interfaces again, so it keeps the LAN
+//     behavior and the override it requires;
+//   - any other IP: bind it and advertise it; it is LAN-reachable, so the
+//     unguarded endpoint still needs the override.
+func resolveADHDListener(bind string, port int) (adhdListener, error) {
+	if err := validateADHDBind(bind); err != nil {
+		return adhdListener{}, err
+	}
+	if bind == "" {
+		return adhdListener{Addr: fmt.Sprintf(":%d", port), Host: outboundIP(), Force: true}, nil
+	}
+
+	ip := net.ParseIP(bind)
+	listener := adhdListener{Addr: net.JoinHostPort(ip.String(), strconv.Itoa(port))}
+	if ip.IsUnspecified() {
+		listener.Host = outboundIP()
+		listener.Force = true
+		return listener, nil
+	}
+	listener.Host = ip.String()
+	listener.Force = !ip.IsLoopback()
+	return listener, nil
+}
 
 // readyTimeout bounds how long a demo waits for a child to open its port.
 // A variable, not a constant, so tests can shorten it.

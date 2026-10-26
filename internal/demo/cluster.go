@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"text/template"
 	"time"
@@ -381,6 +382,13 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Fprintf(os.Stderr, "warning: could not record demo ports: %v\n", saveErr)
 	}
 
+	// Where adhd's MCP surface listens. Resolved before anything starts so a bad
+	// --adhd-bind fails without leaving children behind.
+	adhdListen, err := resolveADHDListener(opts.ADHDBind, adhdPort)
+	if err != nil {
+		return err
+	}
+
 	// --- Temp directories ---------------------------------------------------
 	tmpRoot, err := os.MkdirTemp("", "lezz-demo-*")
 	if err != nil {
@@ -475,17 +483,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	// --- Start adhd headless ------------------------------------------------
 	smokeAlarmURL := fmt.Sprintf("http://0.0.0.0:%d", portA)
-	adhdBin, adhdArgs, adhdNotes, err := prepareADHD([]string{
-		"--headless",
-		"--config", adhdConfigPath,
-		"--log", adhdLogPath,
-		"--mcp-addr", fmt.Sprintf(":%d", adhdPort),
-		"--smoke-alarm", smokeAlarmURL,
-		// Deliberate all-interfaces bind for LAN discovery; adhd's advertise
-		// guard otherwise refuses to register/advertise an unguarded endpoint
-		// (see adhd#15). --force states the override out loud for the demo.
-		adhdForce,
-	})
+	adhdBin, adhdArgs, adhdNotes, err := prepareADHD(demoADHDArgs(adhdConfigPath, adhdLogPath, adhdListen, smokeAlarmURL))
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
@@ -503,7 +501,7 @@ func Run(ctx context.Context, opts Options) error {
 	// GET /mcp is an SSE endpoint that never closes, so HTTP-based readiness
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
-	if readyErr := waitServiceOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort), adhdExited); readyErr != nil {
+	if readyErr := waitServiceOpen(ctx, net.JoinHostPort(adhdListen.Host, strconv.Itoa(adhdPort)), adhdExited); readyErr != nil {
 		return readinessError("adhd MCP", readyErr, adhdLogPath)
 	}
 
@@ -513,7 +511,7 @@ func Run(ctx context.Context, opts Options) error {
 		Name:     clusterName(),
 		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
 		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
-		AdhdMCP:  fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
+		AdhdMCP:  adhdListen.mcpURL(adhdPort),
 		Projects: projectSeedsFromEnv(),
 	}
 
