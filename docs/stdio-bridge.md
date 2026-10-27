@@ -38,6 +38,12 @@ replace definitions without rebuilding:
 A file whose `name` matches an embedded definition replaces it; a new name is
 appended.
 
+Definitions that depend on something installable live under
+`internal/bridge/configs/examples/` instead and are **not** embedded. Copying one
+into `~/.lezz/lab/bridges/` enables it. An embedded default that cannot resolve
+its command (a tool not on lezz's PATH) turns every `lezz auto` into a startup
+failure, which is worse than not having the skill.
+
 ```yaml
 name: qdrant
 repo: james-gibson/mcp-lab

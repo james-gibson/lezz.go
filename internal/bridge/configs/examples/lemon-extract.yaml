@@ -1,4 +1,9 @@
-# lezz-owned static bridge definition.
+# lezz-owned static bridge definition — EXAMPLE, not embedded.
+#
+# Copy to ~/.lezz/lab/bridges/lemon-extract.yaml to enable it. It is not part of
+# the embedded set on purpose: `lemon-extract-mcp` is an npm bin, and a machine
+# where node is not on lezz's PATH would then fail every `lezz auto` at startup
+# instead of simply not having this skill.
 #
 # lemon-extract exposes its read-only project/GitHub view as MCP tools. It owns
 # no credential: the token is resolved here, at spawn time, from the same
