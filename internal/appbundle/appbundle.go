@@ -186,6 +186,35 @@ func Sign(appPath, bundleID, identity, entitlements string) error {
 	return nil
 }
 
+// BundleExecutable returns the executable CFBundleExecutable names inside the
+// bundle. It falls back to ExecutableName for a bundle without a plist entry.
+func BundleExecutable(appPath string) (string, error) {
+	appPath = filepath.Clean(appPath)
+	out, err := exec.Command("plutil", "-convert", "json", "-o", "-", filepath.Join(appPath, "Contents", "Info.plist")).Output() //nolint:gosec // G204: fixed binary, argv-only, no shell.
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", filepath.Join(appPath, "Contents", "Info.plist"), err)
+	}
+	var p struct {
+		Executable string `json:"CFBundleExecutable"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil {
+		return "", fmt.Errorf("parse %s: %w", filepath.Join(appPath, "Contents", "Info.plist"), err)
+	}
+	if p.Executable == "" {
+		return ExecutableName, nil
+	}
+	return p.Executable, nil
+}
+
+// ExecutablePath is the full path of the bundle's executable.
+func ExecutablePath(appPath string) (string, error) {
+	name, err := BundleExecutable(appPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Clean(appPath), "Contents", "MacOS", name), nil
+}
+
 // ReadInfo reads the bundle's Info.plist and signature state.
 func ReadInfo(appPath string) (Info, error) {
 	if runtime.GOOS != "darwin" {
@@ -224,7 +253,11 @@ func ReadInfo(appPath string) (Info, error) {
 		LocalNetwork: p.LocalNetwork,
 		Bonjour:      p.Bonjour,
 	}
-	if cs, err := exec.Command("codesign", "-dv", "--verbose=4", filepath.Join(appPath, "Contents", "MacOS", ExecutableName)).CombinedOutput(); err == nil { //nolint:gosec // G204: fixed binary, argv-only, no shell.
+	executable, execErr := ExecutablePath(appPath)
+	if execErr != nil {
+		return Info{}, execErr
+	}
+	if cs, err := exec.Command("codesign", "-dv", "--verbose=4", executable).CombinedOutput(); err == nil { //nolint:gosec // G204: fixed binary, argv-only, no shell.
 		for _, line := range strings.Split(string(cs), "\n") {
 			switch {
 			case strings.HasPrefix(line, "Authority="):
@@ -288,8 +321,13 @@ func Uninstall(appPath string, force bool) error {
 }
 
 // RunningPIDs returns the pids whose command is the bundle executable.
+// The executable is read from the bundle, not assumed to be lezz: the same
+// helpers manage lezz.sea.app.
 func RunningPIDs(appPath string) ([]int, error) {
-	exe := filepath.Join(filepath.Clean(appPath), "Contents", "MacOS", ExecutableName)
+	exe, err := ExecutablePath(appPath)
+	if err != nil {
+		return nil, err
+	}
 	out, err := exec.Command("ps", "-axo", "pid=,command=").Output()
 	if err != nil {
 		return nil, err

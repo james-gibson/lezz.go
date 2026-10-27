@@ -56,7 +56,8 @@ lezz app info                          # show bundle identity and signature
 lezz app uninstall [--force]           # remove Lezz.app
 
 # lezz.sea dashboard (signed dev release)
-lezz sea                               # launch it, installing it if missing
+lezz sea                               # supervise it over a stdio isotope channel
+lezz sea --open                        # launch detached (viewer only)
 lezz sea --check                       # show the installed build and whether it verifies
 lezz sea --install                     # install or update without launching
 
@@ -376,14 +377,19 @@ start a cluster.
 ---
 ## lezz sea
 
-Launch the [lezz.sea](https://github.com/james-gibson/lezz.sea) dashboard. When
-the app is already installed, this is just `open -a`: no network, no update.
+Install and supervise the [lezz.sea](https://github.com/james-gibson/lezz.sea)
+dashboard. `lezz sea` starts it as a child with a private stdin/stdout pipe, so
+the sandboxed build can ask lezz.go for a lab scenario. `--open` keeps the old
+detached LaunchServices launch and makes the app a viewer.
 
 ```sh
-lezz sea                 # launch; install from the dev release if missing
+lezz sea                 # install if missing, then supervise with the channel
+lezz sea --open          # launch detached (LaunchServices; viewer only)
 lezz sea --install       # install or update, do not launch
 lezz sea --check         # what is installed, and does it verify
 lezz sea --force         # reinstall over a verified copy
+lezz sea --app DIR       # run a locally built bundle (skips download/verification)
+lezz sea --log FILE      # app stderr (default ~/.lezz/logs/lezz.sea.log)
 ```
 
 The dashboard is published as a signed macOS bundle on the `dev` prerelease of
@@ -409,9 +415,28 @@ warns); it exists for the window before a notarized build is published and
 should not be scripted against.
 
 Installing is a staged copy plus a rename into `~/Applications`, never an
-in-place overwrite, and it refuses to replace a running copy. The loopback
-dashboard shows exactly the cluster it is told about — `lezz sea` only decides
-which bundle runs.
+in-place overwrite, and it refuses to replace a running copy.
+
+### The isotope channel
+
+The Scenarios panel can launch in the sandboxed build only because lezz.go, not
+the app, runs the alarm. The app writes one JSON object per line to its stdout,
+never a command line. A `start` request names a cluster slug and carries the
+derived YAML as data; lezz.go checks that the YAML's `state_dir`, `lock_file`
+and `baseline_file` are under its own lab root, writes it to
+`~/.lezz/sea/Clusters/<slug>/member-N/config.yaml`, and runs
+`ocd-smoke-alarm serve --config=... --mode=headless`. An `adhd` request gets a
+free port in 9190–9289 and a generated `adhd.yaml`; a `stop` request stops the
+cluster; `reveal` opens the instance directory in Finder. The app polls
+`/status` and renders the row; quitting the app or Ctrl-C stops everything it
+started.
+
+The app's sandbox container is deliberately **not** the shared directory: TCC
+keeps other processes out of it, so lezz.go cannot read a config the app wrote
+there. Sending the YAML as data and letting lezz.go own the lab root is what
+makes the channel work without weakening the sandbox. The app never supplies a
+binary or an argument — the verbs are fixed, the cluster is a slug, and this
+package builds the argv from templates.
 
 ## lezz agent
 

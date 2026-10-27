@@ -1809,7 +1809,7 @@ func normalizeArgs(argv []string) []string {
 	return out
 }
 
-// lezz sea [--install] [--check] [--force] [--allow-unnotarized] [--channel dev]
+// lezz sea [--install] [--check] [--open] [--force] [--allow-unnotarized] [--channel dev]
 //
 // Launches the lezz.sea dashboard. When the app is missing it is downloaded
 // from the signed dev release and verified before anything is launched: the
@@ -1817,13 +1817,20 @@ func normalizeArgs(argv []string) []string {
 // runtime, secure timestamp and notarization ticket. Nothing in that path
 // trusts the download — the signature is the trust anchor, and a build that
 // fails it is refused rather than installed.
+//
+// The default launch is a supervised child with a private stdio channel: the
+// app asks for isotopes, lezz starts them, and closing the app stops the lab.
+// --open keeps the old detached LaunchServices launch (no channel).
 func cmdSea(ctx context.Context) {
 	fs := flag.NewFlagSet("sea", flag.ContinueOnError)
 	installOnly := fs.Bool("install", false, "install or update without launching")
 	check := fs.Bool("check", false, "report what is installed and exit")
+	openDetached := fs.Bool("open", false, "launch detached through LaunchServices (no isotope channel)")
 	force := fs.Bool("force", false, "reinstall even when a verified copy is installed")
 	allowUnnotarized := fs.Bool("allow-unnotarized", false, "install a signed build with no notarization ticket (dev only)")
 	channel := fs.String("channel", sea.Channel, "release channel to install from")
+	logPath := fs.String("log", "", "app stderr log (default ~/.lezz/logs/lezz.sea.log)")
+	appPath := fs.String("app", "", "run a locally built bundle instead of the installed one (skips download and verification)")
 	if !parseOrHelp(fs, os.Args[2:]) {
 		return
 	}
@@ -1838,7 +1845,11 @@ func cmdSea(ctx context.Context) {
 	}
 
 	if *check {
-		path, ok := sea.Installed("")
+		path := expandHome(*appPath)
+		ok := path != ""
+		if !ok {
+			path, ok = sea.Installed("")
+		}
 		if !ok {
 			fmt.Printf("%s is not installed\n", sea.AppName)
 			return
@@ -1856,28 +1867,68 @@ func cmdSea(ctx context.Context) {
 		return
 	}
 
-	res, err := sea.Ensure(ctx, sea.Options{
-		Channel:          *channel,
-		Force:            *force,
-		AllowUnnotarized: *allowUnnotarized,
-		Log:              func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
-	})
-	if err != nil {
+	sig, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+
+	path := expandHome(*appPath)
+	if path == "" {
+		res, err := sea.Ensure(sig, sea.Options{
+			Channel:          *channel,
+			Force:            *force,
+			AllowUnnotarized: *allowUnnotarized,
+			Log:              func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "sea:", err)
+			os.Exit(1)
+		}
+		if res.Downloaded {
+			fmt.Printf("installed %s %s (%s)\n", sea.AppName, res.Version, res.Build)
+		}
+		path = res.Path
+	} else if _, err := os.Stat(path); err != nil {
 		fmt.Fprintln(os.Stderr, "sea:", err)
 		os.Exit(1)
-	}
-	if res.Downloaded {
-		fmt.Printf("installed %s %s (%s)\n", sea.AppName, res.Version, res.Build)
 	}
 	if *installOnly {
-		fmt.Printf("  %s\n", res.Path)
+		fmt.Printf("  %s\n", path)
+		stop()
 		return
 	}
-	if err := appbundle.Launch(res.Path, nil, false, false); err != nil {
-		fmt.Fprintln(os.Stderr, "sea:", err)
+	if *openDetached {
+		if err := appbundle.Launch(path, nil, false, false); err != nil {
+			fmt.Fprintln(os.Stderr, "sea:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("launched %s\n", path)
+		stop()
+		return
+	}
+
+	if pids, runErr := appbundle.RunningPIDs(path); runErr == nil && len(pids) > 0 {
+		fmt.Fprintf(os.Stderr, "sea: lezz.sea is already running (pid %v); quit it, or use --open to bring it forward\n", pids)
 		os.Exit(1)
 	}
-	fmt.Printf("launched %s\n", res.Path)
+	log := *logPath
+	if log == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			fmt.Fprintln(os.Stderr, "sea:", homeErr)
+			os.Exit(1)
+		}
+		log = filepath.Join(home, ".lezz", "logs", "lezz.sea.log")
+	}
+	fmt.Printf("launched %s (channel; close the window or Ctrl-C to stop the lab)\n", path)
+	runErr := sea.Run(sig, sea.RunOptions{
+		AppPath: path,
+		LogPath: log,
+		Out:     os.Stdout,
+		Err:     os.Stderr,
+	})
+	stop()
+	if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
+		fmt.Fprintln(os.Stderr, "sea:", runErr)
+		os.Exit(1)
+	}
 }
 
 // lezz app install|open|info|uninstall
@@ -2193,7 +2244,7 @@ var commandDocs = []commandDoc{
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},
 	{"seed init", "lezz seed init [--surface base]", "Create seed.json (project id, surface, auth ref)", true},
 	{"see", "lezz see", "Read seed.json, show the 42i start and surface", true},
-	{"sea", "lezz sea [--install|--check]", "Launch lezz.sea, installing it from the signed dev release when missing", true},
+	{"sea", "lezz sea [--install|--check|--open]", "Install and supervise lezz.sea: the app asks for isotopes over a stdio channel", true},
 	{"debug", "lezz debug keygen|lease|fetch-keys", "Debug lease keys and signing", true},
 	{"anon", "lezz anon [--lease FILE] [--listen host:port]", "Serve the anonymous MCP surface (empty tool list); the debug socket needs a valid lease", true},
 	{"app", "lezz app install|open|info|uninstall", "Wrap the lezz binary in a macOS .app: a stable identity for TCC permissions and passkeys", false},
