@@ -196,13 +196,28 @@ Feature: One adhd session hub for the lezz.sea lab
     And the private seed is not shared
     And the shared project's isotope is agreed explicitly, not derived from the private one
 
-  Scenario: a private session publishes no mDNS record
+  Scenario: a private session publishes no mDNS record by default
     Given a session carries a private workspace
+    And its policy does not permit discovery
     When lezz sea starts its hub
     Then the hub binds 127.0.0.1
     And the hub publishes no "_adhd-isotope._tcp" record
     And the app still learns the hub endpoint from the channel
     And a child adhd reaches the hub through "--prime-addr"
+
+  Scenario: a permitted announcement carries the claim and not the content
+    Given a private workspace whose policy permits discovery
+    When its task is announced
+    Then the announcement names the task id, the claimant and the tick
+    And the announcement does not carry the task's content
+    And the log holds the same claim and no payload
+
+  Scenario: a public user verifies a private rotation as a mirror
+    Given the public tree holds "package-lock.json"
+    And a dev has applied a merge commit to the advisory tree
+    Then a public user can check the lock file's sha under the merge reversal
+    And the check agrees with the announcement
+    And the public user learns nothing about the advisory's content
 
   Scenario: a guest outside the workspace cannot compute its task
     Given workspace "kb/security" is private and "kb" is public

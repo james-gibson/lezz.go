@@ -186,6 +186,18 @@ in `ISOTOPE-COLLAPSE.md` § *Next*). So Phase 5 puts the identity in the name an
 TXT, and rotates the name when adhd grows a rotation; a second advertisement for one route
 becomes a second claimant in the same work group either way.
 
+### Announce the claim, not the content
+
+Everything that leaves a workspace — an mDNS record, a hub log, a `--prime-plus` push — is an
+announcement, and announcements are the evidence layer. A log that names the task, the claimant
+and the tick is a durable rotational announcement a mirror can verify; a log that carries the vuln
+text is a disclosure with a claim attached. The line is content, not destination: a hub is the
+right place for claims and the wrong place for payload, which is also why a private task's hub
+must not be the tree a guest can read. Verification across a boundary works because 42i supplies a
+shared zero and an order (`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Shared zero, an order, and a
+mirror*): a public user can check that the `package-lock.json` sha reverses as announced after a
+merge without learning anything about the advisory.
+
 ### What silence costs
 
 Two nodes holding the same array and agreeing on the tick derive the same prefix and epoch with
@@ -258,10 +270,11 @@ construction (`internal/federation/isotopes.go:15`, `:38`) rather than re-verifi
 So the LAN path is "enrol the hub in the mesh's registry", not "bind the hub wider":
 
 - **Today**: the hub advertises `_adhd-isotope._tcp` on loopback and is discoverable on this
-  host. No `--force`, no gateway, no root. Except when the session carries private work: a
-  loopback bind is still published on every interface (`isotope/mdns.go:32` registers with no
-  interface filter), so the record names the task even though the port is unreachable. A private
-  session therefore advertises nothing and its children find the hub through the channel (D13).
+  host. No `--force`, no gateway, no root. A session that carries private work does not advertise
+  by default — a loopback bind is still published on every interface (`isotope/mdns.go:32`
+  registers with no interface filter), so the record names the task even though the port is
+  unreachable. When policy permits the announcement, it carries the claim and not the content
+  (D13).
 - **When federation is enabled**: the hub registers its isotope with a mesh member's smoke-alarm
   and reaches peers through the registry the introducer aggregates. The hub's own MCP bind stays
   loopback; what crosses the LAN is the registration, not the control surface.
@@ -304,7 +317,7 @@ then the shared range", removes the race.
 | D10 | **Decided.** The DNS-SD instance name carries the task id *and* the member id, encoded `<family>-v<N>-<hmac16>-<member8>` because the label takes no colon and must be unique per instance; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
 | D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
 | D12 | **Decided.** An unshared workspace is not advertised at all, and sharing mints a new seed rather than widening access to a private one. | Non-connection is the only enforced privacy boundary; a seed cannot be un-shared, and mode bits are only a partial presumption. |
-| D13 | **Decided.** Advertisement is opt-in per session and off for a private workspace; children locate the hub through the channel, not mDNS. | The guard asks whether a peer can *reach* the endpoint; privacy asks whether it should *know the task exists*. A loopback port still publishes a name on every interface. |
+| D13 | **Decided.** Advertisement is opt-in per session, off by default for a private workspace; when policy permits it, the record carries the claim only (task, claimant, tick). Children locate the hub through the channel, not mDNS. | A loopback port still publishes a name on every interface, so publication is a visibility decision; the guard only answers whether a peer can *reach* it. Logs are the same evidence layer: durable rotation announcements a mirror can verify, never the payload. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
