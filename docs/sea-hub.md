@@ -136,11 +136,17 @@ So the sea view is not a seed→isotope tree; it is work groups with rotating me
 
 The isotope belongs in the DNS-SD **instance name**, not in a TXT field bolted to a static name:
 `<isotope>._adhd-isotope._tcp.local.` An announcement is then the rotation made visible — a new
-name appears, the old one is withdrawn, and the sequence of names *is* the rotation of
-(node, tick). The TXT record carries what the name cannot: `role`, `trust_rung`, and the scope
-the member serves. The seed array is never on the wire: it is the alphabet both sides already
-hold, and publishing it would buy agreement the peers already have while handing a stranger the
-ability to compute the same silent variables.
+name appears, the old one is withdrawn, and the sequence of names *is* the rotation.
+
+Who is named in it matters: the isotope id is `family-vN:signature` over what is being done, so
+**the name carries the task** (a seed plus an action), while the tick and the node name the
+*claim* on it — who is on the task now. TXT carries the rest: `role`, `trust_rung`, scope
+(workspace + route) and the current claimant. The seed array is never on the wire: it is the
+alphabet both sides already hold, and publishing it would buy agreement the peers already have
+while handing a stranger the ability to compute the same silent variables.
+
+The schedule behind that split, and why a fork is a rotation rather than a branch, is
+`kb/scripts/lab/WORKSPACE-SCHEDULE.md`.
 
 Constraints that decide the shape:
 
@@ -188,6 +194,31 @@ Computability is symmetric, so silence buys agreement, not secrecy:
   nodes silently in phase and two nodes that have diverged look identical until one announces —
   which is why an unannounced rotation is a finding rather than a test. Silence is the
   optimisation; the claim is what makes the silence checkable.
+
+### Workspace, work group, task, claim
+
+Four levels, four lifetimes. The view needs all four because a level that outlives its members
+cannot be keyed on them.
+
+| level | lifetime | keyed on |
+|---|---|---|
+| workspace | durable | the tree (and the project route it serves) |
+| work group | durable across tasks | the route — its id is invariant across replicas and rotation |
+| work task | as long as the action | seed + action, which is what the isotope id already signs |
+| claim | one tick | node + tick, announced as a rotation claim |
+
+This is where the work group meets the workspace: a private group may mint a seed per task —
+that is what a fork is — so a seed is a **task** key, never a grouping key. Grouping by seed
+gives a task list; grouping by workspace gives the durable boundary, with work groups and their
+tasks underneath and the rotating claims at the bottom. A workspace can hold two people on
+different tasks, or one task with a person and an agent: **participants attach to the task**, so
+presence is per task, not per workspace and not per node.
+
+The boundary that makes the workspace real is inherited unix permissions on the tree of seeds
+and isos, not a gateway. That protects the lineage; it does nothing for a call. So the two
+boundaries stay separate: **files are private by mode, calls are priced by distance**, and a
+workspace is never an authorization boundary — seeing a colleague's task does not grant calling
+its route. The PII shield and the rung do that (`ISOTOPE-COLLAPSE.md` § *The PII shield*).
 
 ### Federation is the upstream, and the only LAN path
 
@@ -241,7 +272,8 @@ then the shared range", removes the race.
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
 | D8 | Work-group grouping ships after the hub, not with it. | It needs an identity-bearing instance name, a scope in TXT, and an app parse; keeping it separate keeps the hub reviewable. |
-| D10 | **Decided.** The isotope goes in the DNS-SD instance name (the claim); TXT carries role, rung and scope; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
+| D10 | **Decided.** The isotope goes in the DNS-SD instance name — naming the *task* (seed + action), not the node; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
+| D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
@@ -270,10 +302,10 @@ expected status document, and the hub config names it.
 child through `adhd.proxy`; the app/channel light is shown with the cluster lights.
 
 **Phase 5 — discovery and work groups (adhd + lezz.sea).**
-adhd advertises without a registry and puts its isotope identity in the instance name, with scope
-(project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups by work
-group (route) with its members underneath, ages a silent member out by last announcement against
-the tick, and leaves a route-less advertisement named. A repeated advertisement for one route
+adhd advertises without a registry and puts its isotope identity (the task) in the instance name,
+with scope (project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups
+workspace → work group → task → claim, ages a silent claim out by last announcement against the
+tick, and leaves a route-less advertisement named. A repeated advertisement for one route
 joins the existing group as another claimant. The advertisement is loopback-scoped (D9): it is
 not the LAN path and must not be widened to become one. Rotating the name needs adhd to grow a
 rotation loop, and carrying the claim needs smoke-alarm to expose `route.identity` — neither is

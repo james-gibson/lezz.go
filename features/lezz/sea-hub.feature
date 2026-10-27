@@ -167,3 +167,17 @@ Feature: One adhd session hub for the lezz.sea lab
     Then its instance name carries its isotope identity
     And its TXT record carries "role", "trust_rung" and "scope"
     And neither the instance name nor the TXT record carries the seed array
+
+  Scenario: a new seed starts a task, not a workspace
+    Given the app shows workspace "lezz.go"
+    When the workspace mints a new seed for its next action
+    Then the workspace is still one row
+    And a new task appears under its work group
+    And no second workspace is created
+
+  Scenario: participants attach to the task, not the workspace
+    Given a task in workspace "lezz.go" has a claim from a person
+    When an agent joins that same task
+    Then the task shows both participants
+    And it is still one task row
+    And a second person on another task in the workspace is not shown under it
