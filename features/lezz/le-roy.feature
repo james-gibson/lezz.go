@@ -108,6 +108,24 @@ Feature: le.roy rotates or yields, and accepts nothing else
     Then it is a finding rather than a test
     And its result is not evidence
 
+  Scenario: a dry run decides the same and moves nothing
+    Given a clean workspace at a commit
+    When I run "le.roy rotate --claimant agent-a --dry-run"
+    Then it exits 0
+    And the verdict and the invariants match a real run
+    And the output says it was a dry run
+    And it wrote no state, no history and no record
+    And it announced nothing
+
+  Scenario: a dry counter-rotation needs no announcement
+    Given a clean workspace at a commit
+    When I run "le.roy jenkins --to agent-b --dry-run"
+    Then it exits 0
+    And the output says it was a dry run
+    And it moved no claim
+    And it published no "_le-roy-yield._tcp" record
+    And the real counter-rotation would have been announced
+
   Scenario: a receiver refuses an unchecked yield
     Given a yield that says the rotation was not checked
     When the receiver runs "le.roy check" on it

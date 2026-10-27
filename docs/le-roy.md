@@ -27,6 +27,8 @@ le.roy check   [--dir PATH] [--claimant NAME] [--tick N]
 le.roy rotate  [--dir PATH] [--claimant NAME]
 le.roy yield   --to NAME [--dir PATH] [--claimant NAME]
 le.roy jenkins --to NAME [--dir PATH] [--claimant NAME]
+
+# every verb also accepts --dry-run: compute and print, move nothing
 ```
 
 - `--dir` defaults to `.` and names the workspace; nothing outside it is read.
@@ -143,6 +145,36 @@ What it must never be used for: making progress. `jenkins` in a normal handover 
 that skips the challenge; `jenkins` in a chaos run is a deliberate, declared perturbation. The verb
 is the same and the announcement is the same; only the claim the operator makes about it differs,
 which is why the run's invariant has to be written down somewhere a verifier can read.
+
+## Stress, and the dry run
+
+The same verb that perturbs a fleet also loads one. A counter-rotation is cheap to compute and
+expensive to *move*, which makes it a natural unit of work for a stress harness — provided the
+harness runs it without moving anything.
+
+**`--dry-run` computes and prints; it never writes and never announces.** No record, no listener,
+no state file, no history. The output says `"dry_run": true` and `"announced": false`, and the
+reason names the mode rather than a failure.
+
+Two properties make the dry run usable as a measurement:
+
+- **The verdict is identical to the real run's.** Same subject, same invariant marks, same
+  refusals — only the side effects are missing. A dry run that decided differently would be a
+  different program, and the load numbers would describe the wrong one.
+- **A dry run moves no claim, so it needs no announcement.** A counter-rotation that moves a claim
+  must be announced or it is a finding; a simulation that moves nothing is not a counter-rotation
+  at all. This is why the announcement can stay non-optional for `jenkins` while `--dry-run` stays
+  free of it: the rule is about moving, not about the verb.
+
+Which gives the stress rule: **load generators dry-run; real counter-rotations are chaos.** A
+harness that issued ten thousand real `jenkins` yields would not be a load test — it would be a
+partition storm indistinguishable from an outage, and every one of them would have to be announced
+to stay legitimate. In-memory dry runs measure the same code path with none of that: bind the
+subject, verify every invariant, decide, print, exit.
+
+What the harness measures is therefore narrow and honest: the latency of bind + verify + decide,
+the cost of the announcement path when it is suppressed, and that a one-shot process leaves no
+listener, no lock and no file behind.
 
 ## Output
 
