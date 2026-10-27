@@ -258,7 +258,10 @@ construction (`internal/federation/isotopes.go:15`, `:38`) rather than re-verifi
 So the LAN path is "enrol the hub in the mesh's registry", not "bind the hub wider":
 
 - **Today**: the hub advertises `_adhd-isotope._tcp` on loopback and is discoverable on this
-  host. No `--force`, no gateway, no root.
+  host. No `--force`, no gateway, no root. Except when the session carries private work: a
+  loopback bind is still published on every interface (`isotope/mdns.go:32` registers with no
+  interface filter), so the record names the task even though the port is unreachable. A private
+  session therefore advertises nothing and its children find the hub through the channel (D13).
 - **When federation is enabled**: the hub registers its isotope with a mesh member's smoke-alarm
   and reaches peers through the registry the introducer aggregates. The hub's own MCP bind stays
   loopback; what crosses the LAN is the registration, not the control surface.
@@ -301,6 +304,7 @@ then the shared range", removes the race.
 | D10 | **Decided.** The DNS-SD instance name carries the task id *and* the member id, encoded `<family>-v<N>-<hmac16>-<member8>` because the label takes no colon and must be unique per instance; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
 | D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
 | D12 | **Decided.** An unshared workspace is not advertised at all, and sharing mints a new seed rather than widening access to a private one. | Non-connection is the only enforced privacy boundary; a seed cannot be un-shared, and mode bits are only a partial presumption. |
+| D13 | **Decided.** Advertisement is opt-in per session and off for a private workspace; children locate the hub through the channel, not mDNS. | The guard asks whether a peer can *reach* the endpoint; privacy asks whether it should *know the task exists*. A loopback port still publishes a name on every interface. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
@@ -334,7 +338,8 @@ adhd advertises without a registry and puts the task id and its member id in the
 workspace → work group → task → claim, ages a silent claim out by last announcement against the
 tick, and leaves a route-less advertisement named. A repeated advertisement for one route
 joins the existing group as another claimant. A workspace the operator has not
-shared is not advertised at all (D12), so it never appears as a group with no members. The
+shared is not advertised at all (D12, D13), so it never appears as a group with no members, and a
+private session's hub publishes no mDNS record. The
 advertisement is loopback-scoped (D9): it is not the LAN path and must not be widened to become
 one. Rotating the name needs adhd to grow a
 rotation loop, and carrying the claim needs smoke-alarm to expose `route.identity` — neither is

@@ -195,3 +195,18 @@ Feature: One adhd session hub for the lezz.sea lab
     Then a new seed is minted for the shared project
     And the private seed is not shared
     And the shared project's isotope is agreed explicitly, not derived from the private one
+
+  Scenario: a private session publishes no mDNS record
+    Given a session carries a private workspace
+    When lezz sea starts its hub
+    Then the hub binds 127.0.0.1
+    And the hub publishes no "_adhd-isotope._tcp" record
+    And the app still learns the hub endpoint from the channel
+    And a child adhd reaches the hub through "--prime-addr"
+
+  Scenario: a guest outside the workspace cannot compute its task
+    Given workspace "kb/security" is private and "kb" is public
+    And a guest holds only the public tree
+    Then the guest sees no advisory route
+    And the guest holds no seed for the advisory task
+    And the guest cannot compute the advisory task's isotope
