@@ -154,6 +154,39 @@ func (r Rotation) Accept(claimCorrect bool) (bool, string) {
 	return true, "correct: every invariant holds"
 }
 
+// Yield prepares this rotation for another claimant at head. It is how one agent
+// hands work to another: the evidence is not re-derived and not discarded, the
+// claimant changes, and the receiver can check the result exactly as the giver
+// did.
+//
+// Three refusals, each with its own reason:
+//
+//   - there is nobody to yield to (an empty recipient, or the same claimant);
+//   - the rotation is inverted, so it is not work to hand over — it is a repair
+//     to report, and a yielding agent must not present broken work as done;
+//   - the rotation does not apply at head, so the work has moved and the
+//     recipient would be taking over bytes nobody verified.
+func (r Rotation) Yield(to, head string) (Rotation, error) {
+	to = strings.TrimSpace(to)
+	switch {
+	case to == "":
+		return Rotation{}, fmt.Errorf("yield: no recipient")
+	case to == r.Claimant:
+		return Rotation{}, fmt.Errorf("yield: %s already holds this work", to)
+	case r.Mark() != 1:
+		// Checked before the subject: an inverted rotation is not work at all,
+		// so "the work moved" would name the wrong reason for it.
+		return Rotation{}, fmt.Errorf("yield: an inverted rotation is a repair to report, not work to hand over")
+	case !r.Applies(head):
+		return Rotation{}, fmt.Errorf("yield: the rotation does not apply at %s — the work moved since it was verified", shortSubject(head))
+	}
+
+	yielded := r
+	yielded.Claimant = to
+	yielded.Invariants = append([]Invariant(nil), r.Invariants...)
+	return yielded, nil
+}
+
 // Applies reports whether this rotation may be applied at head.
 //
 // A rotation is portable across locations of one subject: the local HEAD and the

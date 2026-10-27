@@ -413,3 +413,71 @@ func headOf(t *testing.T, repo, ref string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// TestYieldingHandsTheEvidenceToAnotherClaimant is the handover case: the giver
+// does not re-derive anything, the recipient takes the same subject and the same
+// verdicts, and only the claimant changes.
+func TestYieldingHandsTheEvidenceToAnotherClaimant(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+	head := headOf(t, dir, "HEAD")
+
+	giver := NewRotation(context.Background(), "lezz", "agent-a", 50, dir)
+	taken, err := giver.Yield("agent-b", head)
+	if err != nil {
+		t.Fatalf("yield: %v", err)
+	}
+	if taken.Claimant != "agent-b" {
+		t.Fatalf("the recipient is not the claimant: %q", taken.Claimant)
+	}
+	if taken.Subject() != giver.Subject() {
+		t.Fatalf("yield moved the subject: %q vs %q", taken.Subject(), giver.Subject())
+	}
+	if taken.Mark() != 1 {
+		t.Fatalf("yield lost the verdict: %s", taken)
+	}
+	for _, inv := range taken.Invariants {
+		if inv.Verifier == "" {
+			t.Fatalf("%s lost its verifier in the handover", inv.Name)
+		}
+	}
+	if ok, reason := taken.Accept(true); !ok {
+		t.Fatalf("the recipient cannot use what it was handed: %s", reason)
+	}
+
+	// The giver still holds its own record: yielding moves a copy.
+	if giver.Claimant != "agent-a" {
+		t.Fatalf("yielding mutated the giver: %q", giver.Claimant)
+	}
+}
+
+// TestYieldingRefusesTheCasesThatWouldPassOnUnverifiedWork pins the three
+// refusals: nobody to yield to, work that has moved, and an inverted rotation
+// (a repair to report, not work to hand over).
+func TestYieldingRefusesTheCasesThatWouldPassOnUnverifiedWork(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+	head := headOf(t, dir, "HEAD")
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 51, dir)
+
+	if _, err := rotation.Yield("", head); err == nil {
+		t.Fatal("yield accepted an empty recipient")
+	}
+	if _, err := rotation.Yield("agent-a", head); err == nil {
+		t.Fatal("yield handed the work to its current claimant")
+	}
+	if _, err := rotation.Yield("agent-b", strings.Repeat("f", 40)); err == nil {
+		t.Fatal("yield accepted a head the rotation does not apply to")
+	} else if !strings.Contains(err.Error(), "does not apply") {
+		t.Fatalf("moved-work refusal does not say why: %v", err)
+	}
+
+	// An inverted rotation is a repair to report.
+	if err := os.WriteFile(filepath.Join(dir, "broken.go"), []byte(brokenFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	broken := NewRotation(context.Background(), "lezz", "agent-a", 52, dir)
+	if _, err := broken.Yield("agent-b", head); err == nil {
+		t.Fatal("yield handed over an inverted rotation")
+	} else if !strings.Contains(err.Error(), "inverted") {
+		t.Fatalf("inverted refusal does not say why: %v", err)
+	}
+}
