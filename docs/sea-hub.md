@@ -244,11 +244,17 @@ Three boundaries, and only two are real:
 |---|---|---|---|
 | connection | whether the project is reachable at all | no route, no advertisement | enforced — absence |
 | the tree | seeds, isos, the lineage | inherited unix permissions | presumed — local, coarse, defeated by a copy |
-| the route | what a response may disclose | rung, the PII shield | enforced per call |
+| the route | what a response may disclose | rung, the PII shield, the credential class | enforced per call |
 
 **Don't share, don't connect.** The strongest privacy is a project nothing is linked to: no
 advertisement, no hub membership, nothing on the wire naming it. Mode bits are only a partial
 presumption — they bind local users and say nothing about another host.
+
+Authority is expressed as a credential class (public, private seed, PAT, OAuth grant), and a quota
+is only that class made observable in aggregate. One limit matters for the hub: a rung receipt is
+symmetric, so a challenge proves possession to another member of the group and not to an outsider —
+across the boundary what a verifier checks is the rotation, not the receipt
+(`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Quotas are where the classes become observable*).
 
 **Sharing is a new seed, not a permission.** You don't widen a grant on an existing object; you
 exchange seeds and agree an isotope for the project you take on together, so its privacy is
