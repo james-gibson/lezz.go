@@ -139,6 +139,20 @@ Feature: One adhd session hub for the lezz.sea lab
     And the verifier reports the rotation as quarantined
     And it learns nothing about the task's content
 
+  Scenario: a presigned rotation is checked on arrival
+    Given a trusted list agrees the set, the anchor and the tick
+    When a member computes and presigns the rotation for the next tick
+    Then the announcement at that tick matches the presigned claim
+    And the verifier accepts it without a coordinator
+    And the hub decides no order between its children
+
+  Scenario: two members who disagree localise the disagreement
+    Given two members hold the same trusted list
+    Then their presigned rotation for the next tick is the same
+    When one of them holds a different anchor
+    Then their presigned rotations differ
+    And the difference names the broken agreement rather than a vote
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub

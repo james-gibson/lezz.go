@@ -223,6 +223,12 @@ Computability is symmetric, so silence buys agreement, not secrecy:
   rotation that must never happen is a deviation rather than an inference
   (`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Why it is called an isotope*). That is the whole
   reason the hub can police a loopback-only topology without seeing any content.
+- **It can also be committed before the rotation.** A member of the trusted list computes the
+  tie-breaker and presigns the claim for a future tick, so the announcement is checked against a
+  commitment on arrival instead of judged afterwards, and no coordinator arbitrates who goes next.
+  The hub therefore never has to decide an order between children — it verifies a derivation. No
+  code presigns today; the tie-break is deterministic but nothing holds a future claim
+  (`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Presigned rotations for a future tick*).
 
 ### Workspace, work group, task, claim
 
