@@ -226,11 +226,25 @@ tasks underneath and the rotating claims at the bottom. A workspace can hold two
 different tasks, or one task with a person and an agent: **participants attach to the task**, so
 presence is per task, not per workspace and not per node.
 
-The boundary that makes the workspace real is inherited unix permissions on the tree of seeds
-and isos, not a gateway. That protects the lineage; it does nothing for a call. So the two
-boundaries stay separate: **files are private by mode, calls are priced by distance**, and a
-workspace is never an authorization boundary — seeing a colleague's task does not grant calling
-its route. The PII shield and the rung do that (`ISOTOPE-COLLAPSE.md` § *The PII shield*).
+Three boundaries, and only two are real:
+
+| boundary | protects | mechanism | strength |
+|---|---|---|---|
+| connection | whether the project is reachable at all | no route, no advertisement | enforced — absence |
+| the tree | seeds, isos, the lineage | inherited unix permissions | presumed — local, coarse, defeated by a copy |
+| the route | what a response may disclose | rung, the PII shield | enforced per call |
+
+**Don't share, don't connect.** The strongest privacy is a project nothing is linked to: no
+advertisement, no hub membership, nothing on the wire naming it. Mode bits are only a partial
+presumption — they bind local users and say nothing about another host.
+
+**Sharing is a new seed, not a permission.** You don't widen a grant on an existing object; you
+exchange seeds and agree an isotope for the project you take on together, so its privacy is
+possession, not authorization. Two rules follow: a shared task must never reuse a private seed
+(a seed cannot be un-shared), and the isotope agreement is explicit the first time — after both
+sides hold the array, it advances silently. A workspace is therefore never an authorization
+boundary: seeing a colleague's task does not grant calling its route. The PII shield and the
+rung do that (`ISOTOPE-COLLAPSE.md` § *The PII shield*).
 
 ### Federation is the upstream, and the only LAN path
 
@@ -286,6 +300,7 @@ then the shared range", removes the race.
 | D8 | Work-group grouping ships after the hub, not with it. | It needs an identity-bearing instance name, a scope in TXT, and an app parse; keeping it separate keeps the hub reviewable. |
 | D10 | **Decided.** The DNS-SD instance name carries the task id *and* the member id, encoded `<family>-v<N>-<hmac16>-<member8>` because the label takes no colon and must be unique per instance; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
 | D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
+| D12 | **Decided.** An unshared workspace is not advertised at all, and sharing mints a new seed rather than widening access to a private one. | Non-connection is the only enforced privacy boundary; a seed cannot be un-shared, and mode bits are only a partial presumption. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
@@ -318,8 +333,10 @@ adhd advertises without a registry and puts the task id and its member id in the
 (`<family>-v<N>-<hmac16>-<member8>`), with scope (project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups
 workspace → work group → task → claim, ages a silent claim out by last announcement against the
 tick, and leaves a route-less advertisement named. A repeated advertisement for one route
-joins the existing group as another claimant. The advertisement is loopback-scoped (D9): it is
-not the LAN path and must not be widened to become one. Rotating the name needs adhd to grow a
+joins the existing group as another claimant. A workspace the operator has not
+shared is not advertised at all (D12), so it never appears as a group with no members. The
+advertisement is loopback-scoped (D9): it is not the LAN path and must not be widened to become
+one. Rotating the name needs adhd to grow a
 rotation loop, and carrying the claim needs smoke-alarm to expose `route.identity` — neither is
 Phase 5.
 

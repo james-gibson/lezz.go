@@ -182,3 +182,16 @@ Feature: One adhd session hub for the lezz.sea lab
     Then the task shows both participants
     And it is still one task row
     And a second person on another task in the workspace is not shown under it
+
+  Scenario: a workspace nobody shares is not on the wire
+    Given a workspace is private and has not been shared
+    Then no route is advertised for it
+    And the session hub does not list it
+    And nothing on the network names it
+
+  Scenario: sharing a project mints a new seed
+    Given workspace "kb" holds a private seed
+    When the operator shares a project with another person
+    Then a new seed is minted for the shared project
+    And the private seed is not shared
+    And the shared project's isotope is agreed explicitly, not derived from the private one
