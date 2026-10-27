@@ -153,6 +153,17 @@ Feature: One adhd session hub for the lezz.sea lab
     Then their presigned rotations differ
     And the difference names the broken agreement rather than a vote
 
+  Scenario: the localised disagreement is the mirror
+    Given two derivations of the next tick disagree about one agreement
+    Then the difference is the mirror for that scope
+    And no mirror node was deployed for it
+    And the mirror disappears when the derivations agree again
+
+  Scenario: agreement alone shows nothing
+    Given two members have agreed everything and derive the same rotation
+    Then there is no disagreement to reflect
+    And the comparison of their presigned claims is what supplies evidence
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub

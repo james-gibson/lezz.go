@@ -229,6 +229,13 @@ Computability is symmetric, so silence buys agreement, not secrecy:
   The hub therefore never has to decide an order between children — it verifies a derivation. No
   code presigns today; the tie-break is deterministic but nothing holds a future claim
   (`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Presigned rotations for a future tick*).
+- **The mirror is the disagreement, so no verifier role is needed.** Two members on one list compute
+  the same presignature, so a difference *is* the reflection, and its localisation is the mirror's
+  scope. That removes the "mirror node" the rotation comment assumes
+  (`smoke-alarm/internal/mcp_faults/tool_proxy.go:83-85`): the hub needs no separate mirror process,
+  because comparing its derivation with a child's is the mirror. It also means agreement alone shows
+  nothing — which is why the presigned claim matters, since it manufactures the comparison instead
+  of waiting for a fault.
 
 ### Workspace, work group, task, claim
 
