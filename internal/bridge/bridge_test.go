@@ -74,6 +74,15 @@ func runFakeChild() {
 			}
 			_ = json.Unmarshal(req.Params, &p)
 			if p.Name != "echo" {
+				if p.Name == "env" {
+					// Reads its own environment, so a test can prove what the
+					// bridge actually handed the child.
+					result = map[string]any{
+						"content": []any{map[string]any{"type": "text", "text": os.Getenv(stringify(p.Arguments["name"]))}},
+						"isError": false,
+					}
+					break
+				}
 				rerr = &rpcError{Code: -32601, Message: "unknown tool " + p.Name}
 				break
 			}

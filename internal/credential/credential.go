@@ -96,6 +96,22 @@ func (Keychain) Get(service, account string) (string, error) {
 	return strings.TrimSuffix(string(out), "\n"), nil
 }
 
+// GetService returns the secret for a service without naming an account.
+//
+// The seed auth-ref vocabulary is keychain:SERVICE and has no account, so
+// resolving the same ref for a bridge secret cannot require one either.
+func (Keychain) GetService(service string) (string, error) {
+	out, err := exec.Command("security", "find-generic-password", //nolint:gosec // G204: fixed binary, argv-only, no shell.
+		"-s", service, "-w").Output()
+	if err != nil {
+		if isKeychainNotFound(err, out) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("keychain get %s: %w", service, err)
+	}
+	return strings.TrimSuffix(string(out), "\n"), nil
+}
+
 // Delete removes the item, returning ErrNotFound when it is already absent.
 func (Keychain) Delete(service, account string) error {
 	out, err := exec.Command("security", "delete-generic-password", //nolint:gosec // G204: fixed binary, argv-only, no shell.

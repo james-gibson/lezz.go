@@ -10,6 +10,7 @@ import (
 
 	"github.com/james-gibson/isotope"
 	"github.com/james-gibson/lezz.go/internal/bridge"
+	"github.com/james-gibson/lezz.go/internal/credential"
 )
 
 // runningBridge is one lezz-owned stdio skill exposed over loopback HTTP.
@@ -40,7 +41,8 @@ func startBridges(ctx context.Context, logDir string) ([]*runningBridge, error) 
 	for i := range cfgs {
 		cfg := &cfgs[i]
 		br, startErr := bridge.Start(ctx, *cfg, bridge.Options{
-			LogPath: filepath.Join(logDir, "bridge-"+cfg.Name+".log"),
+			LogPath:       filepath.Join(logDir, "bridge-"+cfg.Name+".log"),
+			ResolveSecret: credential.Resolve,
 		})
 		if startErr != nil {
 			closeBridges(out)

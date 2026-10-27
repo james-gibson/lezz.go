@@ -1,0 +1,24 @@
+# lezz-owned static bridge definition.
+#
+# lemon-extract exposes its read-only project/GitHub view as MCP tools. It owns
+# no credential: the token is resolved here, at spawn time, from the same
+# Keychain item `lezz auth github` wrote, and handed to the child in its
+# environment. It never appears in argv, in this file, in the child's /status,
+# or in the bridge log.
+#
+# The tools take an optional rootDir, so one bridge serves every project root
+# the caller names; no path is baked in here.
+name: lemon-extract
+repo: gibsunas/lemon-extract
+command: lemon-extract-mcp
+secrets:
+  # keychain:SERVICE resolves without an account, matching the seed auth-ref
+  # vocabulary. Missing or unreadable means the bridge refuses to start rather
+  # than starting a child that will 401 on the first call.
+  LEMON_GITHUB_TOKEN: keychain:LEZZ_GITHUB_TOKEN
+listen: 127.0.0.1:0
+allowed_tools:
+  - lemon.config
+  - github.viewer
+  - github.repository.projects
+request_timeout: 30s

@@ -45,11 +45,23 @@ type Config struct {
 	Listen         string            `yaml:"listen,omitempty"` // default 127.0.0.1:0
 	AllowedTools   []string          `yaml:"allowed_tools,omitempty"`
 	RequestTimeout string            `yaml:"request_timeout,omitempty"` // default 120s
+
+	// Secrets maps a child environment variable to a credential reference
+	// (env:NAME, file:/path, keychain:SERVICE[/ACCOUNT]). The reference is
+	// resolved at spawn time and the value is placed directly in the child's
+	// environment: it never appears in argv, in a log line, in /status, or in
+	// this YAML. Refs are not env-expanded, because a ref is a name, not a
+	// template.
+	Secrets map[string]string `yaml:"secrets,omitempty"`
 }
 
 // Options carries runtime-only settings that must not live in the static config.
 type Options struct {
 	LogPath string // child stderr; empty means os.Stderr
+	// ResolveSecret turns a Secrets reference into a value. Required when a
+	// bridge declares secrets: without it the bridge fails closed rather than
+	// starting a child with a missing credential.
+	ResolveSecret func(ref string) (string, error)
 }
 
 // Bridge is a running child process plus its HTTP surface.
@@ -140,7 +152,17 @@ func Start(ctx context.Context, cfg Config, opts Options) (*Bridge, error) {
 
 	cmd := exec.Command(bin, cfg.Args...) //nolint:gosec // command is from lezz's own static config
 	cmd.Dir = cfg.Cwd
-	cmd.Env = childEnv(cfg.Env)
+	childEnvironment, envErr := resolveChildEnv(cfg, opts)
+	if envErr != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
+		return nil, envErr
+	}
+	cmd.Env = childEnv(childEnvironment)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
@@ -782,6 +804,41 @@ func expandEnv(s string) string {
 		}
 		return os.Getenv(key)
 	})
+}
+
+// resolveChildEnv merges the static env map with any secrets that must be read
+// at spawn time.
+//
+// A secret is resolved once, kept only in memory, and never echoed. Resolution
+// failure is fatal: a skill that silently starts without its credential is
+// worse than one that does not start, because the failure then surfaces as a
+// confusing 401 from a remote API instead of a bridge that refused.
+func resolveChildEnv(cfg Config, opts Options) (map[string]string, error) {
+	merged := make(map[string]string, len(cfg.Env)+len(cfg.Secrets))
+	for k, v := range cfg.Env {
+		merged[k] = v
+	}
+	for name, ref := range cfg.Secrets {
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("bridge %q: secrets entry with an empty name", cfg.Name)
+		}
+		if _, duplicate := merged[name]; duplicate {
+			return nil, fmt.Errorf("bridge %q: %s is set by both env and secrets", cfg.Name, name)
+		}
+		if opts.ResolveSecret == nil {
+			return nil, fmt.Errorf("bridge %q: %s needs a secret resolver, and none is configured", cfg.Name, name)
+		}
+		value, err := opts.ResolveSecret(ref)
+		if err != nil {
+			// The ref is a name (keychain service, file path), not a value.
+			return nil, fmt.Errorf("bridge %q: resolve secret %s (%s): %w", cfg.Name, name, ref, err)
+		}
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("bridge %q: secret %s (%s) is empty", cfg.Name, name, ref)
+		}
+		merged[name] = value
+	}
+	return merged, nil
 }
 
 // childEnv is a minimal allow-list, not an inheritance of the parent. Secrets
