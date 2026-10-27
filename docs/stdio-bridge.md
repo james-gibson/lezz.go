@@ -38,6 +38,12 @@ replace definitions without rebuilding:
 A file whose `name` matches an embedded definition replaces it; a new name is
 appended.
 
+Definitions that depend on something installable live under
+`internal/bridge/configs/examples/` instead and are **not** embedded. Copying one
+into `~/.lezz/lab/bridges/` enables it. An embedded default that cannot resolve
+its command (a tool not on lezz's PATH) turns every `lezz auto` into a startup
+failure, which is worse than not having the skill.
+
 ```yaml
 name: qdrant
 repo: james-gibson/mcp-lab
@@ -56,12 +62,61 @@ request_timeout: 120s
 `QDRANT_URL` / `QDRANT_API_KEY` are read from lezz's environment; they are
 never written to a config file by lezz.
 
+## Credentials resolved at spawn
+
+`env:` is readable but not always the right source. A token that lezz already
+holds — the `lezz auth github` device-flow token, for example — should not have
+to be exported into the operator's shell just to reach a child. `secrets:` names
+a credential instead of a value:
+
+```yaml
+name: lemon-extract
+repo: gibsunas/lemon-extract
+command: lemon-extract-mcp
+secrets:
+  LEMON_GITHUB_TOKEN: keychain:LEZZ_GITHUB_TOKEN
+allowed_tools: ["lemon.config", "github.viewer", "github.repository.projects"]
+request_timeout: 30s
+```
+
+The ref is resolved **at spawn**, immediately before `exec`, and the value goes
+straight into the child's allow-listed environment. It is never placed in argv,
+written to the YAML, logged, or exposed on `/status`.
+
+Ref forms match `lezz seed init --auth-ref`:
+
+| Ref | Source |
+|---|---|
+| `env:NAME` | the lezz process environment |
+| `file:/abs/path` | a file that must be 0600 (0644 is refused, not warned about) |
+| `keychain:SERVICE` | any account on a macOS generic-password item |
+| `keychain:SERVICE/ACCOUNT` | one specific account |
+
+Failure is fatal, and it is fatal **before** the child starts:
+
+```
+bridge "lemon-extract": resolve secret LEMON_GITHUB_TOKEN (keychain:LEZZ_GITHUB_TOKEN): credential not found
+```
+
+A skill that starts without its credential does not fail where the problem is;
+it fails later as a 401 from a remote API, or worse, quietly degrades to an
+anonymous request. Refusing to start is the only failure mode that points at the
+credential.
+
+Resolving a secret is not the same as authorizing one. lezz resolves what the
+operator named in static config; it does not decide that a skill *should* hold a
+credential. The tool allow-list is what bounds the child's reach, and the
+credential's own scopes are what bounds what it can do with it.
+
 ## Security rules the bridge enforces
 
 - **Command is config-only.** No request field can name or build a command.
 - **Environment allow-list.** The child gets `PATH`, `HOME`, `TMPDIR`, locale,
   TLS and uv cache variables plus exactly the keys in `env` — not lezz's whole
   environment.
+- **Secrets resolved at spawn.** `secrets:` turns a credential reference into a
+  value immediately before `exec`; the value only ever exists in the child's
+  environment. A ref that cannot be resolved stops the bridge.
 - **Tool allow-list.** `allowed_tools` filters `tools/list` and refuses
   `tools/call` for anything else.
 - **Process group.** The child is started with `Setpgid`; shutdown signals the

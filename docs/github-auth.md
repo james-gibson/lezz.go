@@ -125,6 +125,25 @@ reference reads as absent.
 The file fallback exists for headless/test systems. It is a 0600 file, not an
 encrypted store; prefer Keychain where available.
 
+## Handing the token to a skill
+
+Other processes never read the Keychain themselves. A lezz-owned stdio skill
+declares the variable it needs and the ref to resolve:
+
+```yaml
+# internal/bridge/configs/lemon-extract.yaml
+secrets:
+  LEMON_GITHUB_TOKEN: keychain:LEZZ_GITHUB_TOKEN
+```
+
+`lezz` resolves the ref at spawn and places the value in the child's
+allow-listed environment. The token is not printed, not written to the bridge
+YAML, not passed in argv, and not exposed on the child's `/status`. If the item
+is missing the bridge refuses to start. See [stdio-bridge.md](stdio-bridge.md).
+
+This is why a skill needs no auth code of its own: `lezz auth github` owns the
+grant, and the bridge owns the hand-off.
+
 ## Security notes
 
 - **No client secret.** A distributed CLI cannot keep one. Device flow is
