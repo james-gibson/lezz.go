@@ -5,15 +5,23 @@
 //  A seed rotation that is marked, not asserted.
 //
 //  The point of this file is small and load-bearing: a rotation's correctness
-//  is decided by a tool that can fail, and a failure is recorded in the
-//  inverse. Nothing here has to be believed — an agent (or a person) can claim
-//  the rotation is correct, and a claim cannot promote a rotation whose mark is
-//  inverted. That is the whole mechanism; the lint verdict is the verifier.
+//  is decided by tools that can fail, and a failure is recorded in the inverse.
+//  Nothing here has to be believed — an agent (or a person) can claim the
+//  rotation is correct, and a claim cannot promote a rotation whose mark is
+//  inverted.
+//
+//  Each invariant is verified on its own and carries its own mark. A dirty git
+//  state is not a lint failure with a different detail message: it is a
+//  separate invariant, so a rotation can say which layer broke instead of
+//  collapsing every failure into one word. The rotation is as correct as its
+//  weakest invariant, and widening the verifier means adding an invariant, not
+//  editing this file's arithmetic.
 //
 
 package seed
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -22,81 +30,191 @@ import (
 	"time"
 )
 
-// Rotation is one step of a seed's rotation, carrying the mark its verifier
-// gave it.
-type Rotation struct {
-	SeedID string `json:"seed_id"`
-	Tick   uint64 `json:"tick"`
-	// Lint is the verifier's verdict: true when the tree lints.
-	Lint bool `json:"lint"`
-	// Detail is the verifier's own words when it failed. It is not a summary
-	// written by the caller: the caller cannot mark its own rotation.
+// Invariant names one property a rotation asserts, and the verifier's verdict on
+// it.
+type Invariant struct {
+	// Name is the layer: "lint", "git", and whatever is added next.
+	Name string `json:"name"`
+	// Pass is the verifier's verdict. The caller never sets it.
+	Pass bool `json:"pass"`
+	// Detail is the verifier's own words when it failed.
 	Detail string `json:"detail,omitempty"`
 }
 
-// Mark is +1 for a correct rotation and -1 for an inverted one.
+// Mark is +1 when the invariant holds and -1 when it is inverted.
 //
-// The inverse is a distinct state, not "false": a rotation whose verifier
+// The inverse is a distinct state, not "false": an invariant whose verifier
 // failed is marked against itself, so anything that only checks "is the mark
-// truthy" cannot mistake an inverted rotation for a missing one.
-func (r Rotation) Mark() int {
-	if r.Lint {
+// truthy" cannot mistake an inverted invariant for a missing one.
+func (i Invariant) Mark() int {
+	if i.Pass {
 		return 1
 	}
 	return -1
 }
 
-// Accept decides whether a claim about this rotation may be recorded. A claim
-// of correctness is accepted only when the mark is positive; a claim over an
-// inverted rotation is refused with the verifier's reason, and a claim that the
-// rotation is wrong is always accepted (refusing a broken rotation is honest
-// whatever the verifier said).
-func (r Rotation) Accept(claimCorrect bool) (bool, string) {
+// Accept decides whether a claim about this invariant may be recorded. A claim
+// that it holds is accepted only when the mark is positive; a claim over an
+// inverted invariant is refused with the verifier's reason. A claim that it is
+// broken is always accepted — refusing a broken invariant is honest whatever
+// the verifier said.
+func (i Invariant) Accept(claimHolds bool) (bool, string) {
+	name := i.Name
+	if name == "" {
+		name = "invariant"
+	}
 	switch {
-	case r.Lint && claimCorrect:
-		return true, "correct: the tree lints"
-	case r.Lint && !claimCorrect:
-		return true, "accepted: the claim refuses a rotation that lints"
-	case !r.Lint && !claimCorrect:
-		return true, "accepted: the rotation is inverted and the claim agrees"
+	case i.Pass && claimHolds:
+		return true, name + ": correct"
+	case !i.Pass && !claimHolds:
+		return true, name + ": the claim agrees it is inverted"
+	case i.Pass && !claimHolds:
+		return true, name + ": accepted, the claim refuses an invariant that holds"
 	default:
-		reason := "inverted: the tree does not lint"
-		if r.Detail != "" {
-			reason += ": " + firstLine(r.Detail)
+		reason := name + " is inverted"
+		if i.Detail != "" {
+			reason += ": " + firstLine(i.Detail)
 		}
-		return false, reason + " — a claim cannot promote an inverted rotation"
+		return false, reason + " — a claim cannot promote an inverted invariant"
 	}
 }
 
-// NewRotation marks a rotation at seedID/tick by linting dir.
-func NewRotation(ctx context.Context, seedID string, tick uint64, dir string) Rotation {
-	r := LintDir(ctx, dir)
-	r.SeedID = seedID
-	r.Tick = tick
-	return r
+// Rotation is one step of a seed's rotation and the verdict on every invariant
+// it asserts.
+type Rotation struct {
+	SeedID     string      `json:"seed_id"`
+	Tick       uint64      `json:"tick"`
+	Invariants []Invariant `json:"invariants"`
 }
 
-// LintDir runs `go vet` in dir and returns the verdict for a rotation. It is the
-// verifier, and the seam a test may replace; the default is the real toolchain.
-var LintDir = func(ctx context.Context, dir string) Rotation {
+// Mark is the weakest invariant's mark: +1 only when every layer holds, -1 as
+// soon as one is inverted. A rotation is as correct as its weakest layer.
+func (r Rotation) Mark() int {
+	if len(r.Invariants) == 0 {
+		return -1 // nothing verified is not a pass
+	}
+	mark := 1
+	for _, inv := range r.Invariants {
+		if inv.Mark() < mark {
+			mark = inv.Mark()
+		}
+	}
+	return mark
+}
+
+// Accept decides whether a claim about the whole rotation may be recorded. A
+// single inverted layer refuses it, and the reason names the layer.
+func (r Rotation) Accept(claimCorrect bool) (bool, string) {
+	if !claimCorrect {
+		for _, inv := range r.Invariants {
+			if !inv.Pass {
+				return true, inv.Name + ": accepted, the rotation is inverted"
+			}
+		}
+		if r.Mark() == 1 {
+			return true, "accepted: the claim refuses a rotation that holds"
+		}
+		return true, "accepted: the claim refuses a rotation with no verified layer"
+	}
+	for _, inv := range r.Invariants {
+		if ok, reason := inv.Accept(true); !ok {
+			return false, reason
+		}
+	}
+	if r.Mark() != 1 {
+		return false, "refused: no invariant was verified"
+	}
+	return true, "correct: every invariant holds"
+}
+
+// Invariant returns the named layer's verdict.
+func (r Rotation) Invariant(name string) (Invariant, bool) {
+	for _, inv := range r.Invariants {
+		if inv.Name == name {
+			return inv, true
+		}
+	}
+	return Invariant{}, false
+}
+
+// String renders a rotation as its aggregate mark and each layer's mark.
+func (r Rotation) String() string {
+	parts := make([]string, 0, len(r.Invariants))
+	for _, inv := range r.Invariants {
+		parts = append(parts, fmt.Sprintf("%s=%+d", inv.Name, inv.Mark()))
+	}
+	return fmt.Sprintf("%s@%d %+d [%s]", r.SeedID, r.Tick, r.Mark(), strings.Join(parts, " "))
+}
+
+// NewRotation marks a rotation at seedID/tick by verifying every layer in dir.
+// It widens one layer at a time: today lint and cleanliness, each on its own.
+func NewRotation(ctx context.Context, seedID string, tick uint64, dir string) Rotation {
+	return Rotation{
+		SeedID: seedID,
+		Tick:   tick,
+		Invariants: []Invariant{
+			LintDir(ctx, dir),
+			GitCleanDir(ctx, dir),
+		},
+	}
+}
+
+// LintDir runs `go vet` in dir. It is a verifier and a seam; the default is the
+// real toolchain.
+var LintDir = func(ctx context.Context, dir string) Invariant {
+	out, err := run(ctx, dir, "go", "vet", "./...")
+	inv := Invariant{Name: "lint", Pass: err == nil}
+	if err != nil {
+		inv.Detail = detailOr(out, err)
+	}
+	return inv
+}
+
+// GitCleanDir runs `git status --porcelain` in dir. An empty result is clean.
+//
+// A directory that is not a repository is inverted, not skipped: an invariant
+// that cannot be checked has not been shown to hold, and treating "unknown" as
+// "clean" is how a dirty state gets recorded as a rotation.
+var GitCleanDir = func(ctx context.Context, dir string) Invariant {
+	out, err := run(ctx, dir, "git", "status", "--porcelain")
+	if err != nil {
+		return Invariant{Name: "git", Detail: detailOr(out, err)}
+	}
+	if dirty := strings.TrimSpace(string(out)); dirty != "" {
+		return Invariant{Name: "git", Detail: firstLine(dirty)}
+	}
+	return Invariant{Name: "git", Pass: true}
+}
+
+// run executes one verifier in dir with a bounded clock and no workspace
+// leakage, and returns its combined output.
+func run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "vet", "./...") //nolint:gosec // fixed argv; dir is a lab fixture
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed argv; dir is a lab fixture
 	cmd.Dir = dir
-	// A workspace above the fixture would pull the module out of isolation, and
-	// -mod=mod keeps a stale vendor tree from turning a clean tree into a fail.
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
-	out, err := cmd.CombinedOutput()
+	// GOWORK=off keeps a workspace above a fixture from pulling it out of
+	// isolation; -mod=mod keeps a stale vendor tree from failing a clean one.
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = bytes.NewReader(nil)
 
-	r := Rotation{Lint: err == nil}
-	if err != nil {
-		r.Detail = strings.TrimSpace(string(out))
-		if r.Detail == "" {
-			r.Detail = err.Error()
-		}
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, ctx.Err()
 	}
-	return r
+	return out, err
+}
+
+// detailOr keeps a verifier's reason to something a log can carry.
+func detailOr(out []byte, err error) string {
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // firstLine keeps a verifier's reason to one line for an error string.
@@ -105,9 +223,4 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-// String renders a rotation as the mark it carries, for a log or a receipt.
-func (r Rotation) String() string {
-	return fmt.Sprintf("%s@%d %+d", r.SeedID, r.Tick, r.Mark())
 }
