@@ -131,6 +131,14 @@ Feature: One adhd session hub for the lezz.sea lab
     And it sees the task id, the claimant and the tick
     And it sees no seed, no payload and no private route
 
+  Scenario: a rotation that must never happen is identifiable up front
+    Given the verifier holds the agreed charge list and the "42 + 0i" anchor
+    And it has computed the expected signature for the current tick
+    When an announcement claims a rotation to an unexpected claimant
+    Then the announcement does not match the expected signature
+    And the verifier reports the rotation as quarantined
+    And it learns nothing about the task's content
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub

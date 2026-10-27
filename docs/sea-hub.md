@@ -218,6 +218,11 @@ Computability is symmetric, so silence buys agreement, not secrecy:
   nodes silently in phase and two nodes that have diverged look identical until one announces —
   which is why an unannounced rotation is a finding rather than a test. Silence is the
   optimisation; the claim is what makes the silence checkable.
+- **The expectation can be computed before the rotation.** An agreed charge list and anchor fix the
+  encoder deterministically, so the expected signature for a tick is known in advance and a
+  rotation that must never happen is a deviation rather than an inference
+  (`kb/scripts/lab/WORKSPACE-SCHEDULE.md` § *Why it is called an isotope*). That is the whole
+  reason the hub can police a loopback-only topology without seeing any content.
 
 ### Workspace, work group, task, claim
 
