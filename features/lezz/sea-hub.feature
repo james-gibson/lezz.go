@@ -123,6 +123,14 @@ Feature: One adhd session hub for the lezz.sea lab
     And that isotope is registered at the mesh member rung
     And the hub's MCP endpoint still binds 127.0.0.1 only
 
+  Scenario: a private rotation carries a public proof
+    Given a private workspace rotates a task on its own seed
+    And the public federation holds a verifier
+    When the rotation is announced
+    Then the verifier confirms the rotation happened in order
+    And it sees the task id, the claimant and the tick
+    And it sees no seed, no payload and no private route
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub

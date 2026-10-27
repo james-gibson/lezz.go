@@ -258,10 +258,17 @@ sides hold the array, it advances silently. A workspace is therefore never an au
 boundary: seeing a colleague's task does not grant calling its route. The PII shield and the
 rung do that (`ISOTOPE-COLLAPSE.md` § *The PII shield*).
 
-### Federation is the upstream, and the only LAN path
+### Federation is the public proof surface (and the only LAN path)
 
 Same-host mDNS is sufficient until federation is enabled, because enabling it introduces an
-upstream cluster: smoke-alarm's mesh elects an introducer on `base_port` (5100 by default,
+upstream cluster — and that cluster is the reason the arrangement can be private at all: **the
+public federation exists to let private rotations carry public proofs.** A private group rotates
+on its own seed and publishes a claim; a mesh member verifies the rotation without holding
+anything private, which is what stops privacy from being unfalsifiable. Federation membership is
+in that proof, not the content. So the mesh must *reach* a member to verify, while the private work
+stays unreachable — proof reach is public, work reach is not.
+
+The mechanism: smoke-alarm's mesh elects an introducer on `base_port` (5100 by default,
 `smoke-alarm/docs/features/catalog/federation.md:39`), followers claim the next slots, and
 `GET /membership` (`internal/federation/server.go:306`) returns the whole registry. Membership
 is itself the trust evidence — a same-cluster peer is registered as an isotope at rung 4 by
@@ -318,7 +325,7 @@ then the shared range", removes the race.
 | D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
 | D12 | **Decided.** An unshared workspace is not advertised at all, and sharing mints a new seed rather than widening access to a private one. | Non-connection is the only enforced privacy boundary; a seed cannot be un-shared, and mode bits are only a partial presumption. |
 | D13 | **Decided.** Advertisement is opt-in per session, off by default for a private workspace; when policy permits it, the record carries the claim only (task, claimant, tick). Children locate the hub through the channel, not mDNS. | A loopback port still publishes a name on every interface, so publication is a visibility decision; the guard only answers whether a peer can *reach* it. Logs are the same evidence layer: durable rotation announcements a mirror can verify, never the payload. |
-| D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
+| D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path and the public proof surface. | Federation introduces an upstream cluster and its own membership trust, and it exists to let private rotations carry public proofs; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
 
@@ -360,8 +367,9 @@ Phase 5.
 
 **Phase 6 — enrolment in a federation (deferred).**
 When federation lands, the hub registers with a mesh member's smoke-alarm and is discovered
-through `GET /membership` instead of a wider advertisement. Not part of #66; recorded so Phase 5
-does not close the door.
+through `GET /membership` instead of a wider advertisement. The point is not reachability: it is
+that a private rotation has a public verifier, so membership and claims travel while the seed and
+the payload do not. Not part of #66; recorded so Phase 5 does not close the door.
 
 ## Risks and non-goals
 
