@@ -164,7 +164,8 @@ Feature: One adhd session hub for the lezz.sea lab
 
   Scenario: an advertisement carries the claim, not the alphabet
     Given an adhd instance advertises over mDNS
-    Then its instance name carries its isotope identity
+    Then its instance name carries the task id and its member id
+    And the name contains no colon
     And its TXT record carries "role", "trust_rung" and "scope"
     And neither the instance name nor the TXT record carries the seed array
 

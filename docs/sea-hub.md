@@ -138,12 +138,24 @@ The isotope belongs in the DNS-SD **instance name**, not in a TXT field bolted t
 `<isotope>._adhd-isotope._tcp.local.` An announcement is then the rotation made visible — a new
 name appears, the old one is withdrawn, and the sequence of names *is* the rotation.
 
-Who is named in it matters: the isotope id is `family-vN:signature` over what is being done, so
-**the name carries the task** (a seed plus an action), while the tick and the node name the
-*claim* on it — who is on the task now. TXT carries the rest: `role`, `trust_rung`, scope
-(workspace + route) and the current claimant. The seed array is never on the wire: it is the
-alphabet both sides already hold, and publishing it would buy agreement the peers already have
-while handing a stranger the ability to compute the same silent variables.
+Who is named in it matters, and two different ids are both called "isotope":
+
+| id | form | identifies |
+|---|---|---|
+| spec isotope — **task id** | `family-vN:<hmac16>`, colon | what is being done |
+| instance isotope — **member id** | 43-char base64url | which process is doing it |
+
+So **the name carries the task, and the member** — a task can have several participants, and a
+DNS-SD name must be unique per instance, so one alone cannot do the job. The colon is not legal
+in a label (the alphabet is `^[A-Za-z0-9_-]+$`,
+`internal/headless/instance_label_test.go:21`), so the encoding is
+`<family>-v<N>-<hmac16>-<member8>`: 36 bytes for `sea-hub`, inside the 63-byte limit and the
+label stays readable. The tick and the node's role are the rest of the claim; TXT carries
+`role`, `trust_rung`, scope (workspace + route) and the current claimant.
+
+The seed array is never on the wire: it is the alphabet both sides already hold, and publishing
+it would buy agreement the peers already have while handing a stranger the ability to compute
+the same silent variables.
 
 The schedule behind that split, and why a fork is a rotation rather than a branch, is
 `kb/scripts/lab/WORKSPACE-SCHEDULE.md`.
@@ -272,7 +284,7 @@ then the shared range", removes the race.
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
 | D8 | Work-group grouping ships after the hub, not with it. | It needs an identity-bearing instance name, a scope in TXT, and an app parse; keeping it separate keeps the hub reviewable. |
-| D10 | **Decided.** The isotope goes in the DNS-SD instance name — naming the *task* (seed + action), not the node; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
+| D10 | **Decided.** The DNS-SD instance name carries the task id *and* the member id, encoded `<family>-v<N>-<hmac16>-<member8>` because the label takes no colon and must be unique per instance; TXT carries role, rung, scope and the current claimant; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
 | D11 | **Decided.** The view groups by workspace → work group → task → claim, and never by seed. | A private group mints a seed per task, so a seed is a task key; grouping by it produces a task list, not a workspace. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
@@ -302,8 +314,8 @@ expected status document, and the hub config names it.
 child through `adhd.proxy`; the app/channel light is shown with the cluster lights.
 
 **Phase 5 — discovery and work groups (adhd + lezz.sea).**
-adhd advertises without a registry and puts its isotope identity (the task) in the instance name,
-with scope (project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups
+adhd advertises without a registry and puts the task id and its member id in the instance name
+(`<family>-v<N>-<hmac16>-<member8>`), with scope (project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups
 workspace → work group → task → claim, ages a silent claim out by last announcement against the
 tick, and leaves a route-less advertisement named. A repeated advertisement for one route
 joins the existing group as another claimant. The advertisement is loopback-scoped (D9): it is
