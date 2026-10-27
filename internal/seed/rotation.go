@@ -240,6 +240,11 @@ var GitCleanDir = func(ctx context.Context, dir string) Invariant {
 // This is also the seam a CI-gated rotation plugs into: a tag resolves to the
 // same commit, so a gated build and a local run over it share a subject and
 // their marks are interchangeable by design.
+//
+// A worktree is another checkout of one seed, so it is a different workspace
+// over the same subject: the verdict travels, the directory does not. What
+// differs between checkouts is who may read them — the workspace's permissions —
+// which is a separate boundary from what was verified.
 var CommitSubject = func(ctx context.Context, dir string) string {
 	out, err := run(ctx, dir, "git", "status", "--porcelain")
 	if err != nil || strings.TrimSpace(string(out)) != "" {

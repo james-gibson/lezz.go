@@ -220,3 +220,52 @@ func TestADirtyTreeHasNoSubject(t *testing.T) {
 		t.Fatalf("a dirty lint pass was accepted as a tag's rotation: %v %q", ok, reason)
 	}
 }
+
+// TestAWorktreeSharesTheSubject is the copy case: a worktree is another
+// checkout of one seed, so it is a different workspace over the same subject.
+// Its rotation is portable to the original checkout — and a dirty worktree is
+// still unbound.
+func TestAWorktreeSharesTheSubject(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+
+	worktree := filepath.Join(t.TempDir(), "wt")
+	add := exec.Command("git", "worktree", "add", "-q", worktree, "HEAD") //nolint:gosec // fixed argv in a test fixture
+	add.Dir = dir
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v %s", err, out)
+	}
+
+	origin := NewRotation(context.Background(), "lezz", 20, dir)
+	copied := NewRotation(context.Background(), "lezz", 20, worktree)
+
+	if origin.Subject() == "" || copied.Subject() == "" {
+		t.Fatalf("a clean worktree must bind a subject: %q / %q", origin.Subject(), copied.Subject())
+	}
+	if origin.Subject() != copied.Subject() {
+		t.Fatalf("a worktree is another checkout of one seed, got %q and %q", origin.Subject(), copied.Subject())
+	}
+	if origin.Mark() != copied.Mark() {
+		t.Fatalf("marks differ across a worktree: %s vs %s", origin, copied)
+	}
+
+	// The copy's rotation stands for the seed: same subject, same verdict.
+	if ok, reason := copied.Accept(true); !ok {
+		t.Fatalf("a worktree rotation was refused: %s", reason)
+	}
+	if ok, reason := origin.Accept(true); !ok {
+		t.Fatalf("the seed's rotation was refused: %s", reason)
+	}
+
+	// The workspace differs even though the subject does not: a dirty worktree
+	// is its own unbound state and cannot borrow the clean one's subject.
+	if err := os.WriteFile(filepath.Join(worktree, "scratch.txt"), []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dirty := NewRotation(context.Background(), "lezz", 21, worktree)
+	if dirty.Subject() != "" {
+		t.Fatalf("a dirty worktree bound a subject: %q", dirty.Subject())
+	}
+	if ok, _ := dirty.Accept(true); ok {
+		t.Fatal("a dirty worktree was accepted as the seed's rotation")
+	}
+}
