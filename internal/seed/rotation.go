@@ -91,9 +91,16 @@ func (i Invariant) Accept(claimHolds bool) (bool, string) {
 
 // Rotation is one step of a seed's rotation and the verdict on every invariant
 // it asserts.
+//
+// Claimant is who is asserting it — an agent, a workspace, a checkout. Several
+// workspaces can share one subject and report identical marks, and a passing
+// mark leaves no trace that tells them apart; the claimant is the only thing
+// that does. A rotation with no claimant cannot enter an order, because nothing
+// can then say whose work a refusal reordered.
 type Rotation struct {
 	SeedID     string      `json:"seed_id"`
 	Tick       uint64      `json:"tick"`
+	Claimant   string      `json:"claimant"`
 	Invariants []Invariant `json:"invariants"`
 }
 
@@ -126,10 +133,13 @@ func (r Rotation) Accept(claimCorrect bool) (bool, string) {
 		}
 		return true, "accepted: the claim refuses a rotation with no verified layer"
 	}
-	// Report every refusal, not just the first: a dirty tree and an unattributable
-	// lint are different problems, and naming both is what stops one from hiding
-	// the other.
+	// An anonymous claim cannot be told from another workspace's claim over the
+	// same subject: success leaves no distinguishing mark, so the claimant is
+	// what keeps two identical passes apart.
 	var refusals []string
+	if strings.TrimSpace(r.Claimant) == "" {
+		refusals = append(refusals, "claimant is unbound: a passing claim with no claimant is indistinguishable from another workspace's")
+	}
 	for _, inv := range r.Invariants {
 		if ok, reason := inv.Accept(true); !ok {
 			refusals = append(refusals, reason)
@@ -184,12 +194,16 @@ func (r Rotation) String() string {
 	if subject == "" {
 		subject = "unbound"
 	}
-	return fmt.Sprintf("%s@%d %+d [%s] %s", r.SeedID, r.Tick, r.Mark(), strings.Join(parts, " "), shortSubject(subject))
+	claimant := r.Claimant
+	if claimant == "" {
+		claimant = "anonymous"
+	}
+	return fmt.Sprintf("%s@%d by %s %+d [%s] %s", r.SeedID, r.Tick, claimant, r.Mark(), strings.Join(parts, " "), shortSubject(subject))
 }
 
 // NewRotation marks a rotation at seedID/tick by verifying every layer in dir.
 // It widens one layer at a time: today lint and cleanliness, each on its own.
-func NewRotation(ctx context.Context, seedID string, tick uint64, dir string) Rotation {
+func NewRotation(ctx context.Context, seedID, claimant string, tick uint64, dir string) Rotation {
 	// One subject for every layer: the commit that is HEAD and clean. A dirty
 	// tree has no subject, so a lint pass over it cannot be cited as a tag's.
 	subject := CommitSubject(ctx, dir)
@@ -202,6 +216,7 @@ func NewRotation(ctx context.Context, seedID string, tick uint64, dir string) Ro
 	return Rotation{
 		SeedID:     seedID,
 		Tick:       tick,
+		Claimant:   claimant,
 		Invariants: []Invariant{lint, git},
 	}
 }

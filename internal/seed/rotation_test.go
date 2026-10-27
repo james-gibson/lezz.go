@@ -27,7 +27,7 @@ func Broken() { fmt.Printf("%d\n", "not a number") }
 func TestRotationHoldsWhenEveryLayerHolds(t *testing.T) {
 	dir := gitFixture(t, cleanFixture, true)
 
-	rotation := NewRotation(context.Background(), "lezz", 7, dir)
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 7, dir)
 	if rotation.Mark() != 1 {
 		t.Fatalf("a clean tree must mark +1, got %+d (%s)", rotation.Mark(), rotation)
 	}
@@ -39,7 +39,7 @@ func TestRotationHoldsWhenEveryLayerHolds(t *testing.T) {
 	if len(subject) != 40 {
 		t.Fatalf("a clean committed tree must bind a subject, got %q", subject)
 	}
-	if got := rotation.String(); !strings.HasPrefix(got, "lezz@7 +1 [lint=+1 git=+1] "+subject[:12]) {
+	if got := rotation.String(); !strings.HasPrefix(got, "lezz@7 by agent-a +1 [lint=+1 git=+1] "+subject[:12]) {
 		t.Fatalf("rotation rendered as %q", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestRotationHoldsWhenEveryLayerHolds(t *testing.T) {
 func TestLintFailureInvertsOnlyTheLintLayer(t *testing.T) {
 	dir := gitFixture(t, brokenFixture, true)
 
-	rotation := NewRotation(context.Background(), "lezz", 8, dir)
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 8, dir)
 	if rotation.Mark() != -1 {
 		t.Fatalf("a failing tree must mark -1, got %+d", rotation.Mark())
 	}
@@ -88,7 +88,7 @@ func TestDirtyTreeInvertsOnlyTheGitLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rotation := NewRotation(context.Background(), "lezz", 9, dir)
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 9, dir)
 	lint, _ := rotation.Invariant("lint")
 	git, _ := rotation.Invariant("git")
 	if lint.Mark() != 1 {
@@ -173,7 +173,7 @@ func gitFixture(t *testing.T, source string, commit bool) string {
 func TestIdenticalMarksOverDifferentCommitsAreNotInterchangeable(t *testing.T) {
 	dir := gitFixture(t, cleanFixture, true)
 
-	first := NewRotation(context.Background(), "lezz", 10, dir)
+	first := NewRotation(context.Background(), "lezz", "agent-a", 10, dir)
 	if first.Mark() != 1 {
 		t.Fatalf("fixture must hold: %s", first)
 	}
@@ -185,7 +185,7 @@ func TestIdenticalMarksOverDifferentCommitsAreNotInterchangeable(t *testing.T) {
 	if out, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v %s", err, out)
 	}
-	second := NewRotation(context.Background(), "lezz", 11, dir)
+	second := NewRotation(context.Background(), "lezz", "agent-a", 11, dir)
 
 	if first.Mark() != second.Mark() {
 		t.Fatalf("marks differ across an empty commit: %s vs %s", first, second)
@@ -204,7 +204,7 @@ func TestADirtyTreeHasNoSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rotation := NewRotation(context.Background(), "lezz", 12, dir)
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 12, dir)
 	lint, _ := rotation.Invariant("lint")
 	if lint.Mark() != 1 {
 		t.Fatalf("the fixture should still lint: %s", lint.Detail)
@@ -235,8 +235,8 @@ func TestAWorktreeSharesTheSubject(t *testing.T) {
 		t.Fatalf("worktree add: %v %s", err, out)
 	}
 
-	origin := NewRotation(context.Background(), "lezz", 20, dir)
-	copied := NewRotation(context.Background(), "lezz", 20, worktree)
+	origin := NewRotation(context.Background(), "lezz", "agent-a", 20, dir)
+	copied := NewRotation(context.Background(), "lezz", "agent-a", 20, worktree)
 
 	if origin.Subject() == "" || copied.Subject() == "" {
 		t.Fatalf("a clean worktree must bind a subject: %q / %q", origin.Subject(), copied.Subject())
@@ -261,11 +261,87 @@ func TestAWorktreeSharesTheSubject(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(worktree, "scratch.txt"), []byte("uncommitted\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dirty := NewRotation(context.Background(), "lezz", 21, worktree)
+	dirty := NewRotation(context.Background(), "lezz", "agent-a", 21, worktree)
 	if dirty.Subject() != "" {
 		t.Fatalf("a dirty worktree bound a subject: %q", dirty.Subject())
 	}
 	if ok, _ := dirty.Accept(true); ok {
 		t.Fatal("a dirty worktree was accepted as the seed's rotation")
 	}
+}
+
+// TestPassingClaimantsAreOnlyToldApartByTheirClaimant is the shared-space case:
+// several agents work in their own checkouts of one seed, each presuming its own
+// tree passes lint. The passing marks are identical — success leaves no trace —
+// so the claimant is the only discriminator, and the agent whose lint inverted
+// is the only one the evidence can name.
+func TestPassingClaimantsAreOnlyToldApartByTheirClaimant(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+
+	// Two more workspaces over the same subject.
+	claims := []struct {
+		name string
+		dir  string
+		bad  bool
+	}{
+		{name: "agent-a", dir: dir},
+		{name: "agent-b", dir: worktree(t, dir, "wt-b")},
+		{name: "agent-c", dir: worktree(t, dir, "wt-c"), bad: true},
+	}
+	if claims[2].bad {
+		// The failing agent never committed: its work is unbound, not a pass.
+		if err := os.WriteFile(filepath.Join(claims[2].dir, "broken.go"), []byte(brokenFixture), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rotations := make([]Rotation, 0, len(claims))
+	for _, c := range claims {
+		rotations = append(rotations, NewRotation(context.Background(), "lezz", c.name, 30, c.dir))
+	}
+
+	// The two clean workspaces share a subject and a mark.
+	if rotations[0].Subject() == "" || rotations[0].Subject() != rotations[1].Subject() {
+		t.Fatalf("clean workspaces of one seed must share a subject: %q / %q", rotations[0].Subject(), rotations[1].Subject())
+	}
+	if rotations[0].Mark() != rotations[1].Mark() || rotations[0].Mark() != 1 {
+		t.Fatalf("clean workspaces must mark alike: %s vs %s", rotations[0], rotations[1])
+	}
+	if rotations[0].Claimant == rotations[1].Claimant {
+		t.Fatal("fixture: the two claims are the same claimant")
+	}
+
+	// The failing agent is the only one the evidence can name, and it cannot
+	// borrow the shared subject: its tree is unbound.
+	if rotations[2].Mark() != -1 {
+		t.Fatalf("the failing agent did not invert: %s", rotations[2])
+	}
+	if rotations[2].Subject() != "" {
+		t.Fatalf("an uncommitted failure bound a subject: %q", rotations[2].Subject())
+	}
+	ok, reason := rotations[2].Accept(true)
+	if ok {
+		t.Fatal("the failing agent's claim was accepted")
+	}
+	if !strings.Contains(reason, "lint") || !strings.Contains(reason, "unbound") {
+		t.Fatalf("refusal does not name the layer and the missing binding: %q", reason)
+	}
+
+	// An anonymous passing claim could not be placed in any order at all.
+	anonymous := NewRotation(context.Background(), "lezz", "", 30, dir)
+	if ok, reason := anonymous.Accept(true); ok || !strings.Contains(reason, "claimant") {
+		t.Fatalf("an anonymous passing claim was accepted: %v %q", ok, reason)
+	}
+}
+
+// worktree adds a clean checkout of dir at name and returns its path.
+func worktree(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	cmd := exec.Command("git", "worktree", "add", "-q", path, "HEAD") //nolint:gosec // fixed argv in a test fixture
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add %s: %v %s", name, err, out)
+	}
+	return path
 }
