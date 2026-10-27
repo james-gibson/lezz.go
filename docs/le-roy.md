@@ -23,9 +23,10 @@ lie in a file, and the lie does not survive the tool.
 ## The accepted challenge
 
 ```
-le.roy check  [--dir PATH] [--claimant NAME] [--tick N]
-le.roy rotate [--dir PATH] [--claimant NAME]
-le.roy yield  --to NAME [--dir PATH] [--claimant NAME]
+le.roy check   [--dir PATH] [--claimant NAME] [--tick N]
+le.roy rotate  [--dir PATH] [--claimant NAME]
+le.roy yield   --to NAME [--dir PATH] [--claimant NAME]
+le.roy jenkins --to NAME [--dir PATH] [--claimant NAME]
 ```
 
 - `--dir` defaults to `.` and names the workspace; nothing outside it is read.
@@ -35,7 +36,8 @@ le.roy yield  --to NAME [--dir PATH] [--claimant NAME]
   the caller owns the schedule and the tool owns the verdict.
 
 Everything else — `start`, `stop`, `edit`, `assert`, `sign`, `force`, `--skip`, `--trust`,
-`--yes` — is refused with one fixed message:
+`--yes` — is refused with one fixed message. `jenkins` is the one other accepted verb, and it is
+the exception that makes the rule legible (§ *Leeroy*).
 
 ```
 le.roy accepts the rotation challenge only
@@ -59,10 +61,29 @@ Both verbs build the rotation from the workspace, not from the request:
 | `check` | always (read-only) | the workspace is not a directory |
 | `rotate` | every invariant holds, the subject is bound, and the claimant is named | any inverted layer, an unbound subject, or no claimant |
 | `yield` | `Rotation.Yield(to, HEAD)` succeeds | no recipient, the same claimant, an inverted rotation, or a subject that moved |
+| `jenkins` | always — it is the loud escape hatch | no recipient (nothing to yield to) |
 
 A refused rotation is printed **inverted** with its reasons and exits `2`. The tool never
 rotates a broken state into a good-looking one: an inverted rotation is a repair to report, not
 work to advance.
+
+## Leeroy
+
+`le.roy jenkins --to NAME` **always yields**. It checks nothing: not the subject, not the
+verifiers, not the claimant. It is the named exception to "accepts the rotation challenge only",
+and it exists because an escape hatch that has to be *named* is auditable, while one that is
+merely undocumented is not.
+
+The spelling is the joke (`le.roy` → Leeroy Jenkins, charging in), and the escaping is real:
+
+- it never rotates — it can only hand over, so it cannot advance a claim;
+- it marks the rotation **unchecked** and says so on stderr, and it never reports the invariants
+  as holding;
+- a receiver that runs `check` or `yield` on an unchecked claim recomputes the verdict from the
+  workspace, so a jenkins yield cannot launder a broken tree into a trusted one. The escape is
+  from *this agent's* judgement, not from the receiver's.
+
+So the honest sentence is: jenkins yields the work; it does not yield the evidence.
 
 ## Output
 
@@ -86,6 +107,9 @@ One JSON object on stdout, one line, so it composes with a pipe and with Gherkin
   "refusals": []
 }
 ```
+
+A `jenkins` output carries `"verb": "jenkins"`, `"checked": false` and the same rotation shape;
+its invariants are recomputed but marked unchecked, so a reader cannot mistake them for a verdict.
 
 Exit codes: `0` accepted, `2` refused (the challenge was understood and declined), `1` usage or
 I/O. Nothing is written to the workspace, no state file is created, and there is no history: a
@@ -141,6 +165,13 @@ Scenario: le.roy accepts no other challenge
   When I run "le.roy assert --correct"
   Then it exits 2
   And it prints "le.roy accepts the rotation challenge only"
+
+Scenario: le.roy jenkins always yields
+  When I run "le.roy jenkins --to agent-b"
+  Then it exits 0
+  And the claimant is agent-b
+  And it says the rotation was not checked
+  And it does not report the rotation as correct
 
 Scenario: an asserted pass is not a verdict
   Given a rotation document that claims "pass": true with no verifier
