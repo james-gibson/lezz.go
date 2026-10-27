@@ -1,6 +1,6 @@
 # sea: one adhd session hub, with child clusters as prime-plus proxies
 
-**Status:** preparation for [#66](https://github.com/james-gibson/lezz.go/issues/66). No code yet.
+**Status:** Phase 1 implemented on this branch (`internal/sea/hub.go`); phases 2–5 outstanding.
 **Basis:** lezz.go `4bd091e` (#65), adhd `c483fb3`, lezz.sea `8be7973` (#12), read on 2026-10-26.
 **Companion:** james-gibson/lezz.sea#12 (the app side), james-gibson/adhd#49 (the self-join
 that doubles lights).
@@ -353,12 +353,16 @@ then the shared range", removes the race.
 
 ## Work, in order
 
-**Phase 1 — hub lifecycle (lezz.go).**
-`internal/sea/hub.go`: build the hub config (loopback addr, one channel entry per D5), start it,
-write `hub.pid` under the lab root, return its endpoint. `supervisor.go`: start the hub before
-the app, send `hub` once the app's `hello` arrives, add the hub to the ordered cleanup. Tests:
-hub starts before the app; the endpoint is announced; the config is under the lab root and
-loopback; 9090 is preferred and a free alternative is used when taken.
+**Phase 1 — hub lifecycle (lezz.go).** ✅ implemented.
+`internal/sea/hub.go`: `hubConfig` builds a loopback-only adhd config (one channel entry per D5,
+none when there is no status endpoint yet); `startHub` writes it under `<lab root>/hub/`, starts
+adhd, writes `adhd.pid`, and returns the endpoint; `portAllocator` hands out 9090 if free and
+otherwise a cluster port, so the hub and the children cannot collide. `supervisor.go`: the hub
+starts before the app, the `hub` message is sent once the app's `hello` arrives, `stop` refuses
+`hub`, and `stopOrder` stops every cluster first and the hub last on both exit paths. Replies to
+`adhd` now carry `hubEndpoint`. Tests: the announcement precedes the first reply; the config is
+under the lab root, loopback-only, and carries the channel light only when told to; the allocator
+never repeats a port; the stop order puts the hub last; `stop` refuses the hub.
 
 **Phase 2 — children as prime-plus (lezz.go).**
 `startADHD`: argv gains `--prime-plus --prime-addr`; after the child answers, `adhd.cluster.join`
