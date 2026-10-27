@@ -5,9 +5,9 @@
 **Companion:** james-gibson/lezz.sea#12 (the app side), james-gibson/adhd#49 (the self-join
 that doubles lights).
 
-This document answers the three questions the issue leaves open before the hub becomes the
-only path, records the two places where the proposal as written does not match the code, and
-sequences the work so each phase is independently testable. The acceptance criteria are in
+This document answers the questions the issue leaves open before the hub becomes the only
+path, records where the proposal as written does not match the code, and sequences the work so
+each phase is independently testable. The acceptance criteria are in
 `features/lezz/sea-hub.feature`.
 
 ## What #65 left in place
@@ -91,8 +91,7 @@ What "announce an isotope" requires, and its limit:
   (`headless/advertise_guard.go`) still applies: it permits a loopback bind and refuses a
   non-loopback one without `--force`. A loopback-bound hub's record names an address that only
   means anything on this host, so this buys **same-host** discovery — which is every child
-  `lezz sea` starts — and not LAN discovery. LAN children need the hub gated
-  (`kb/scripts/cluster/shield_gate.py`), which is a separate decision.
+  `lezz sea` starts. **Decided: same-host only, until federation is enabled** (see below).
 - The TXT record is `v=1`, `role=`, `trust_rung=` (`isotope/mdns.go:25`). There is no seed and
   no isotope identity in it, so "collapse by seed then isotope" is not answerable from the
   advertisement today. It needs `seed=` (the project route, or the seed id when no route is
@@ -112,6 +111,30 @@ identity), and keep each instance addressable underneath. An advertisement with 
 ungrouped and named — fail closed, not merged. Two instances that share an endpoint are never
 one row. `adhd#49` is the same defect seen from the other side: a self-join doubles lights
 because the watcher keys on name rather than route.
+
+### Federation is the upstream, and the only LAN path
+
+Same-host mDNS is sufficient until federation is enabled, because enabling it introduces an
+upstream cluster: smoke-alarm's mesh elects an introducer on `base_port` (5100 by default,
+`smoke-alarm/docs/features/catalog/federation.md:39`), followers claim the next slots, and
+`GET /membership` (`internal/federation/server.go:306`) returns the whole registry. Membership
+is itself the trust evidence — a same-cluster peer is registered as an isotope at rung 4 by
+construction (`internal/federation/isotopes.go:15`, `:38`) rather than re-verified.
+
+So the LAN path is "enrol the hub in the mesh's registry", not "bind the hub wider":
+
+- **Today**: the hub advertises `_adhd-isotope._tcp` on loopback and is discoverable on this
+  host. No `--force`, no gateway, no root.
+- **When federation is enabled**: the hub registers its isotope with a mesh member's smoke-alarm
+  and reaches peers through the registry the introducer aggregates. The hub's own MCP bind stays
+  loopback; what crosses the LAN is the registration, not the control surface.
+- **Never**: an unguarded non-loopback bind, a privileged helper, or a hub advertised by
+  `--force`. Those are the alarm offense `headless/advertise_guard.go` exists to refuse, and none
+  of them is needed for the app, the children, or the mesh.
+
+Enrolling the hub in a federation is out of scope for #66; it lands with federation, and #66
+only has to avoid foreclosing it — which means the hub's advertisement keeps carrying its role
+and identity, and the hub's endpoint is announced to the app rather than assumed.
 
 ## 4. Stop order
 
@@ -141,6 +164,7 @@ then the shared range", removes the race.
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
 | D8 | Seed→isotope grouping ships after the hub, not with it. | It needs an adhd TXT change and an app parse; keeping it separate keeps the hub reviewable. |
+| D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
 
@@ -170,7 +194,13 @@ child through `adhd.proxy`; the app/channel light is shown with the cluster ligh
 **Phase 5 — discovery and collapse (adhd + lezz.sea).**
 adhd advertises without a registry and adds `seed=` / `isotope=` to the TXT record;
 `BonjourDiscovery` parses TXT; the sidebar groups seed → isotope and leaves an ungrouped
-advertisement named.
+advertisement named. The advertisement is loopback-scoped (D9): it is not the LAN path and must
+not be widened to become one.
+
+**Phase 6 — enrolment in a federation (deferred).**
+When federation lands, the hub registers with a mesh member's smoke-alarm and is discovered
+through `GET /membership` instead of a wider advertisement. Not part of #66; recorded so Phase 5
+does not close the door.
 
 ## Risks and non-goals
 
@@ -186,9 +216,8 @@ advertisement named.
 ## Questions for the owner
 
 D5 is settled: the hub watches a loopback status endpoint that lezz serves, and gains no adhd
-write path. Still open:
+write path. D9 is settled: same-host mDNS until federation, which supplies the upstream registry
+and stays in user land. Still open:
 
-1. **Phase 5 scope**: is same-host mDNS enough for now, or should the hub be gated for LAN
-   discovery?
-2. **Collapse surface**: the sidebar only, or also the Lights panel's per-cluster grouping
+1. **Collapse surface**: the sidebar only, or also the Lights panel's per-cluster grouping
    (which is where the doubling in `adhd#49` is most visible)?

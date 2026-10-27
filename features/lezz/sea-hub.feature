@@ -109,6 +109,20 @@ Feature: One adhd session hub for the lezz.sea lab
     When adhd is asked to advertise the hub beyond loopback
     Then it refuses to advertise an unauthenticated MCP endpoint
 
+  Scenario: the hub is discovered on this host only until federation is enabled
+    Given lezz sea is running with a session hub
+    And no federation introducer is running
+    Then the hub advertises "_adhd-isotope._tcp" on the loopback address
+    And the advertisement names the hub's role
+    And no smoke-alarm on the lab network lists the hub
+
+  Scenario: enabling federation gives the hub an upstream registry instead of a wider bind
+    Given a federation introducer is elected on port 5100
+    When the hub enrols with that mesh
+    Then its isotope is listed in "GET /membership"
+    And that isotope is registered at the mesh member rung
+    And the hub's MCP endpoint still binds 127.0.0.1 only
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub
