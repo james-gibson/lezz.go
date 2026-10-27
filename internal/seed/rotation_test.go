@@ -35,7 +35,11 @@ func TestRotationHoldsWhenEveryLayerHolds(t *testing.T) {
 	if !ok {
 		t.Fatalf("a correct rotation was refused: %s", reason)
 	}
-	if got := rotation.String(); got != "lezz@7 +1 [lint=+1 git=+1]" {
+	subject := rotation.Subject()
+	if len(subject) != 40 {
+		t.Fatalf("a clean committed tree must bind a subject, got %q", subject)
+	}
+	if got := rotation.String(); !strings.HasPrefix(got, "lezz@7 +1 [lint=+1 git=+1] "+subject[:12]) {
 		t.Fatalf("rotation rendered as %q", got)
 	}
 }
@@ -161,4 +165,58 @@ func gitFixture(t *testing.T, source string, commit bool) string {
 		}
 	}
 	return dir
+}
+
+// TestIdenticalMarksOverDifferentCommitsAreNotInterchangeable is the tag case:
+// a passing lint over a tagged commit and a passing lint over a different commit
+// carry identical marks, and only the subject tells them apart.
+func TestIdenticalMarksOverDifferentCommitsAreNotInterchangeable(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+
+	first := NewRotation(context.Background(), "lezz", 10, dir)
+	if first.Mark() != 1 {
+		t.Fatalf("fixture must hold: %s", first)
+	}
+
+	// Move HEAD without changing the verdict: an empty commit is a new subject
+	// with the same marks.
+	commit := exec.Command("git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "next", "--allow-empty") //nolint:gosec // fixed argv in a test fixture
+	commit.Dir = dir
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	second := NewRotation(context.Background(), "lezz", 11, dir)
+
+	if first.Mark() != second.Mark() {
+		t.Fatalf("marks differ across an empty commit: %s vs %s", first, second)
+	}
+	if first.Subject() == second.Subject() || second.Subject() == "" {
+		t.Fatalf("subjects did not move with HEAD: %q vs %q", first.Subject(), second.Subject())
+	}
+}
+
+// TestADirtyTreeHasNoSubject is the failure the tag comparison depends on: a
+// lint pass over uncommitted bytes has identical marks to a gated one and no
+// subject, so it cannot be cited in its place.
+func TestADirtyTreeHasNoSubject(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rotation := NewRotation(context.Background(), "lezz", 12, dir)
+	lint, _ := rotation.Invariant("lint")
+	if lint.Mark() != 1 {
+		t.Fatalf("the fixture should still lint: %s", lint.Detail)
+	}
+	if lint.Subject != "" {
+		t.Fatalf("a dirty tree bound a subject: %q", lint.Subject)
+	}
+	if rotation.Subject() != "" {
+		t.Fatalf("a dirty rotation reported a subject: %q", rotation.Subject())
+	}
+	ok, reason := rotation.Accept(true)
+	if ok || !strings.Contains(reason, "unbound") {
+		t.Fatalf("a dirty lint pass was accepted as a tag's rotation: %v %q", ok, reason)
+	}
 }

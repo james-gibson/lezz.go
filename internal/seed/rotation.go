@@ -39,6 +39,13 @@ type Invariant struct {
 	Pass bool `json:"pass"`
 	// Detail is the verifier's own words when it failed.
 	Detail string `json:"detail,omitempty"`
+	// Subject is the commit the verdict is about. Empty means unbound: the
+	// verdict was taken over something a tag cannot name, so it cannot stand in
+	// for a tag's rotation even when the mark agrees.
+	Subject string `json:"subject,omitempty"`
+	// Verifier names the tool that decided Pass, so a local run and a gated
+	// one are distinguishable even when their marks are identical.
+	Verifier string `json:"verifier,omitempty"`
 }
 
 // Mark is +1 when the invariant holds and -1 when it is inverted.
@@ -62,6 +69,9 @@ func (i Invariant) Accept(claimHolds bool) (bool, string) {
 	name := i.Name
 	if name == "" {
 		name = "invariant"
+	}
+	if claimHolds && i.Subject == "" {
+		return false, name + " is unbound: the verdict names no commit, so it cannot stand for a tag"
 	}
 	switch {
 	case i.Pass && claimHolds:
@@ -116,15 +126,42 @@ func (r Rotation) Accept(claimCorrect bool) (bool, string) {
 		}
 		return true, "accepted: the claim refuses a rotation with no verified layer"
 	}
+	// Report every refusal, not just the first: a dirty tree and an unattributable
+	// lint are different problems, and naming both is what stops one from hiding
+	// the other.
+	var refusals []string
 	for _, inv := range r.Invariants {
 		if ok, reason := inv.Accept(true); !ok {
-			return false, reason
+			refusals = append(refusals, reason)
 		}
+	}
+	if len(refusals) > 0 {
+		return false, strings.Join(refusals, "; ")
 	}
 	if r.Mark() != 1 {
 		return false, "refused: no invariant was verified"
 	}
 	return true, "correct: every invariant holds"
+}
+
+// Subject is the commit every invariant was verified over. It is empty when the
+// layers disagree or when no verdict is bound, which is the state a tag cannot
+// be compared against.
+func (r Rotation) Subject() string {
+	subject := ""
+	for _, inv := range r.Invariants {
+		if inv.Subject == "" {
+			return ""
+		}
+		if subject == "" {
+			subject = inv.Subject
+			continue
+		}
+		if inv.Subject != subject {
+			return ""
+		}
+	}
+	return subject
 }
 
 // Invariant returns the named layer's verdict.
@@ -143,19 +180,29 @@ func (r Rotation) String() string {
 	for _, inv := range r.Invariants {
 		parts = append(parts, fmt.Sprintf("%s=%+d", inv.Name, inv.Mark()))
 	}
-	return fmt.Sprintf("%s@%d %+d [%s]", r.SeedID, r.Tick, r.Mark(), strings.Join(parts, " "))
+	subject := r.Subject()
+	if subject == "" {
+		subject = "unbound"
+	}
+	return fmt.Sprintf("%s@%d %+d [%s] %s", r.SeedID, r.Tick, r.Mark(), strings.Join(parts, " "), shortSubject(subject))
 }
 
 // NewRotation marks a rotation at seedID/tick by verifying every layer in dir.
 // It widens one layer at a time: today lint and cleanliness, each on its own.
 func NewRotation(ctx context.Context, seedID string, tick uint64, dir string) Rotation {
+	// One subject for every layer: the commit that is HEAD and clean. A dirty
+	// tree has no subject, so a lint pass over it cannot be cited as a tag's.
+	subject := CommitSubject(ctx, dir)
+
+	lint := LintDir(ctx, dir)
+	lint.Subject, lint.Verifier = subject, "local:go-vet"
+	git := GitCleanDir(ctx, dir)
+	git.Subject, git.Verifier = subject, "local:git-status"
+
 	return Rotation{
-		SeedID: seedID,
-		Tick:   tick,
-		Invariants: []Invariant{
-			LintDir(ctx, dir),
-			GitCleanDir(ctx, dir),
-		},
+		SeedID:     seedID,
+		Tick:       tick,
+		Invariants: []Invariant{lint, git},
 	}
 }
 
@@ -184,6 +231,33 @@ var GitCleanDir = func(ctx context.Context, dir string) Invariant {
 		return Invariant{Name: "git", Detail: firstLine(dirty)}
 	}
 	return Invariant{Name: "git", Pass: true}
+}
+
+// CommitSubject names the commit a verdict can be bound to: HEAD, if the
+// working tree is clean. A dirty tree returns "" — the verdict is about bytes
+// no tag names, so it is unbound rather than attributable.
+//
+// This is also the seam a CI-gated rotation plugs into: a tag resolves to the
+// same commit, so a gated build and a local run over it share a subject and
+// their marks are interchangeable by design.
+var CommitSubject = func(ctx context.Context, dir string) string {
+	out, err := run(ctx, dir, "git", "status", "--porcelain")
+	if err != nil || strings.TrimSpace(string(out)) != "" {
+		return ""
+	}
+	head, headErr := run(ctx, dir, "git", "rev-parse", "HEAD")
+	if headErr != nil {
+		return "" // no commits yet: nothing a tag could name
+	}
+	return strings.TrimSpace(string(head))
+}
+
+// shortSubject keeps a commit id readable in a one-line log.
+func shortSubject(subject string) string {
+	if len(subject) > 12 {
+		return subject[:12]
+	}
+	return subject
 }
 
 // run executes one verifier in dir with a bounded clock and no workspace
