@@ -149,3 +149,21 @@ Feature: One adhd session hub for the lezz.sea lab
     Given an advertisement carries an isotope identity and no route
     Then it is listed as a named, ungrouped row
     And it is not merged with a member that shares its endpoint
+
+  Scenario: a rotation is a new name, not a new process
+    Given an adhd instance announces itself as "adhd-7c1d0a4e"
+    When the public tick advances to the next rotation
+    Then it announces a new instance name carrying its new isotope
+    And the previous name is withdrawn
+    And the app still shows one work group for its route
+
+  Scenario: a member that crashed ages out without a goodbye
+    Given a work group has a claimant last announced two ticks ago
+    Then the app ages that member out of the work group
+    And it does not wait for a removal notification
+
+  Scenario: an advertisement carries the claim, not the alphabet
+    Given an adhd instance advertises over mDNS
+    Then its instance name carries its isotope identity
+    And its TXT record carries "role", "trust_rung" and "scope"
+    And neither the instance name nor the TXT record carries the seed array

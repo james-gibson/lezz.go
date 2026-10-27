@@ -132,17 +132,62 @@ So the sea view is not a seed→isotope tree; it is work groups with rotating me
   `adhd#49` is the same defect from the other side: a self-join keys a light by name and shows
   one route twice.
 
-**What the advertisement must carry, and what exists today.** To place a member in a work group
-and verify its claim, an advertisement needs a route identity (scope + capability), a node
-identity, and the rotation claim. adhd can supply the scope today — the project route, resolved
-from config, `LEZZ_PROJECT_ROUTE` or `seed.json` (`headless/project_identity.go:37`) — and its
-per-process isotope identity. It cannot supply a route id or a rotation: there is no epoch or
-prefix anywhere in adhd's `internal/` or `cmd/`, and the TXT record is only `v=1`, `role=`,
-`trust_rung=` (`isotope/mdns.go:25`). smoke-alarm computes both halves — `ToolProxy.RouteID()`
-and `Announcement()` — but does not expose them on a target yet (the open item in
-`ISOTOPE-COLLAPSE.md` § *Next*). So Phase 5 groups by the route adhd *can* name, and carries the
-rotation claim when one exists; until then, a second advertisement for one route is a second
-claimant in the same group, which is the behaviour to build the row around.
+### The name is the claim
+
+The isotope belongs in the DNS-SD **instance name**, not in a TXT field bolted to a static name:
+`<isotope>._adhd-isotope._tcp.local.` An announcement is then the rotation made visible — a new
+name appears, the old one is withdrawn, and the sequence of names *is* the rotation of
+(node, tick). The TXT record carries what the name cannot: `role`, `trust_rung`, and the scope
+the member serves. The seed array is never on the wire: it is the alphabet both sides already
+hold, and publishing it would buy agreement the peers already have while handing a stranger the
+ability to compute the same silent variables.
+
+Constraints that decide the shape:
+
+- **A DNS-SD instance label is 63 bytes.** The isotope identity is 43 characters of base64url,
+  which is a legal label (`internal/headless/instance_label_test.go:21` pins the alphabet), so
+  `adhd-<isotope>` fits at 48. Today `instanceLabel()` truncates to eight characters
+  (`headless/server.go:659`, `:684`) — enough to be unique, not enough to be the claim.
+- **The tick is public and already agreed.** `PublicTick` is `floor(unix / PublicTickSeconds)`
+  with `PublicTickSeconds = 5`, and the comment on it is the design: *"every host with a synced
+  clock agrees on it without a coordinator"* (`mcpserver/server.go:57-79`). That is the offset.
+  Smoke-alarm's `ClusterRotationPeriod` is the same 5 s, with a 1 s grace.
+- **Removal is not guaranteed.** adhd's own browser says `grandcat/zeroconf` delivers no removal
+  notifications and a health failure is the departure signal (`internal/discovery/mdns.go:22-23`).
+  So sea ages a member out by last announcement against the tick, never by `didRemove` — a
+  crashed node never sends a goodbye.
+- **A duplicate label is not an identity.** DNS-SD resolves a name collision by renaming
+  (`… (2)`), so the app reads the isotope out of the label and rejects anything that does not
+  parse as one, rather than treating the browser's key as the member.
+
+What exists today: adhd advertises `adhd-<8 chars>`, once per process, with `v=1`, `role=`,
+`trust_rung=` (`isotope/mdns.go:25`). It has a public tick but no rotation loop, and no route id
+or prefix anywhere in `internal/` or `cmd/`. smoke-alarm computes both halves —
+`ToolProxy.RouteID()`, `Announcement()` — and does not expose them on a target yet (the open item
+in `ISOTOPE-COLLAPSE.md` § *Next*). So Phase 5 puts the identity in the name and the scope in the
+TXT, and rotates the name when adhd grows a rotation; a second advertisement for one route
+becomes a second claimant in the same work group either way.
+
+### What silence costs
+
+Two nodes holding the same array and agreeing on the tick derive the same prefix and epoch with
+no message at all; the only thing they must ever exchange is the offset — which is what a
+rotation claim is, and why grace is a notification-latency budget rather than a second clock
+(`mcp_faults/tool_proxy.go:75-85`). The lab already splits the two: **the period is alphabet, the
+counter is offset** — share `ClusterRotationPeriod`, allow the counter to differ
+(`DECLARATION-CHAIN.md` § *Amendment: delay, rotation, and the price of hammering*).
+
+Computability is symmetric, so silence buys agreement, not secrecy:
+
+- **A derived value that does not bind the claimant is interchangeable between co-computing
+  nodes.** That is `RouteKey{Address, Claimant, Epoch}` — the address alone is never a key. Same
+  array, same tick, different claimant, different stamp.
+- **Integrity comes from verification, not derivation.** `VerifyRotation` derives the route id
+  itself and never takes the claim's word; no node is its own witness.
+- **A work group exists without a registry, but is not auditable without the announcement.** Two
+  nodes silently in phase and two nodes that have diverged look identical until one announces —
+  which is why an unannounced rotation is a finding rather than a test. Silence is the
+  optimisation; the claim is what makes the silence checkable.
 
 ### Federation is the upstream, and the only LAN path
 
@@ -195,7 +240,8 @@ then the shared range", removes the race.
 | D5 | **Decided.** The hub carries one `smoke_alarm` entry: lezz's loopback channel status. | The only way to get a channel light without an adhd write path (§2b). It retires "empty": the hub is the session's adhd plus the channel source, and nothing else. |
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
-| D8 | Work-group grouping ships after the hub, not with it. | It needs an adhd TXT change, a scope on the advertisement, and an app parse; keeping it separate keeps the hub reviewable. |
+| D8 | Work-group grouping ships after the hub, not with it. | It needs an identity-bearing instance name, a scope in TXT, and an app parse; keeping it separate keeps the hub reviewable. |
+| D10 | **Decided.** The isotope goes in the DNS-SD instance name (the claim); TXT carries role, rung and scope; the seed array never goes on the wire. | The name is the rotation made observable; the array is the alphabet both sides already hold. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
@@ -224,13 +270,14 @@ expected status document, and the hub config names it.
 child through `adhd.proxy`; the app/channel light is shown with the cluster lights.
 
 **Phase 5 — discovery and work groups (adhd + lezz.sea).**
-adhd advertises without a registry and adds scope (project route) and its isotope identity to
-the TXT record; `BonjourDiscovery` parses TXT; the sidebar groups by work group (route) with its
-members underneath, ages a silent member out, and leaves a route-less advertisement named. A
-repeated advertisement for one route joins the existing group as another claimant. The
-advertisement is loopback-scoped (D9): it is not the LAN path and must not be widened to become
-one. Rotation state is shown when a claim exists; carrying the claim itself needs adhd to grow
-one and smoke-alarm to expose `route.identity` — not Phase 5.
+adhd advertises without a registry and puts its isotope identity in the instance name, with scope
+(project route) in TXT; `BonjourDiscovery` parses the name and TXT; the sidebar groups by work
+group (route) with its members underneath, ages a silent member out by last announcement against
+the tick, and leaves a route-less advertisement named. A repeated advertisement for one route
+joins the existing group as another claimant. The advertisement is loopback-scoped (D9): it is
+not the LAN path and must not be widened to become one. Rotating the name needs adhd to grow a
+rotation loop, and carrying the claim needs smoke-alarm to expose `route.identity` — neither is
+Phase 5.
 
 **Phase 6 — enrolment in a federation (deferred).**
 When federation lands, the hub registers with a mesh member's smoke-alarm and is discovered
