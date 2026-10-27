@@ -116,6 +116,26 @@ Three rules keep the drama from being an offence:
 reported to its caller. Only the escape hatch shouts, which is exactly what makes it visible in
 a lab log when it happens.
 
+## Partial commits
+
+Because a claim is bound to a *subject* and not to a shared workspace, several agents can
+contribute different things and stay agreed without agreeing on anything first.
+
+- **Each contribution is its own commit**, and each agent claims its own commit.
+- **The subject is cumulative**, so a claim over `S_n` was verified against everything before it:
+  B's rotation covers A's file because B's commit contains it. That is what "staying agreed"
+  actually means — not that the agents compared notes, but that every later claim encloses the
+  earlier work and would invert if that work broke.
+- **A stale claim is refused, not merged.** A rotation prepared over `S_{n-1}` does not apply at
+  `S_n`, so it cannot be yielded onto work it never saw; the holder re-prepares. There is no merge
+  step, which is the same reason a fork is a rotation rather than a branch.
+- **A repair restores agreement with no reconciliation.** Fix A's contribution, commit, and the
+  next claim holds: the chain moves forward; nothing has to be replayed.
+
+So partial commits need no quorum, no lock, and no ordering protocol between agents. The only
+thing that breaks agreement is a claim that no longer applies — and that is a re-prepare, not a
+disagreement.
+
 ## Chaos, and the counter-rotation
 
 At this point `jenkins` stops looking like a joke and starts looking like a fault injector, because

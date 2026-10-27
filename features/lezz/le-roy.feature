@@ -108,6 +108,29 @@ Feature: le.roy rotates or yields, and accepts nothing else
     Then it is a finding rather than a test
     And its result is not evidence
 
+  Scenario: partial commits from different agents stay agreed
+    Given a clean workspace at a commit
+    When agent "agent-a" commits its contribution and claims it
+    And agent "agent-b" commits a different contribution on top
+    Then each claim names the commit it was verified over
+    And agent "agent-b"'s claim covers agent "agent-a"'s contribution
+    And agent "agent-a"'s claim no longer applies
+    And neither claim is merged into the other
+
+  Scenario: a break in an earlier contribution inverts a later claim
+    Given agent "agent-a" has committed a file that lints
+    And agent "agent-b" has claimed the commit containing it
+    When agent "agent-a" commits a change that breaks lint
+    Then agent "agent-b"'s next claim is inverted
+    And the refusal names "lint"
+    And the cause is a file agent "agent-b" did not write
+
+  Scenario: a repair restores agreement without reconciliation
+    Given a later claim was inverted by an earlier contribution
+    When the earlier contribution is repaired and committed
+    Then the next claim holds
+    And no claim had to be replayed or merged
+
   Scenario: a dry run decides the same and moves nothing
     Given a clean workspace at a commit
     When I run "le.roy rotate --claimant agent-a --dry-run"

@@ -481,3 +481,71 @@ func TestYieldingRefusesTheCasesThatWouldPassOnUnverifiedWork(t *testing.T) {
 		t.Fatalf("inverted refusal does not say why: %v", err)
 	}
 }
+
+// TestPartialCommitsStayAgreed is the multi-agent case: each agent contributes a
+// different piece as its own commit, every claim names the commit it was verified
+// over, and the chain stays agreed because a claim over an older subject is
+// refused rather than merged.
+func TestPartialCommitsStayAgreed(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+
+	// Agent A contributes a file and claims its own commit.
+	writeCommit(t, dir, "a.go", "package fixture\n\n// A is agent A's contribution.\nfunc A() int { return 1 }\n", "a: contribution")
+	first := NewRotation(context.Background(), "lezz", "agent-a", 60, dir)
+	if first.Mark() != 1 {
+		t.Fatalf("agent A's partial commit did not hold: %s", first)
+	}
+
+	// Agent B contributes a different file on top of A's commit.
+	writeCommit(t, dir, "b.go", "package fixture\n\n// B is agent B's contribution.\nfunc B() int { return 2 }\n", "b: contribution")
+	second := NewRotation(context.Background(), "lezz", "agent-b", 61, dir)
+
+	// B's claim is over a new subject and covers A's work too: the subject is
+	// cumulative, so a verified claim attests everything before it.
+	if second.Subject() == first.Subject() {
+		t.Fatal("B's commit did not move the subject")
+	}
+	if !second.Applies(second.Subject()) || second.Applies(first.Subject()) {
+		t.Fatalf("claims do not follow their own subject: %q vs %q", first.Subject(), second.Subject())
+	}
+
+	// A stale claim is refused, not merged: agreement is a chain, not a union.
+	if _, err := first.Yield("agent-c", second.Subject()); err == nil {
+		t.Fatal("a claim over an older subject was yielded onto a newer one")
+	}
+
+	// A break in A's contribution inverts B's claim, because B verified the
+	// subject that contains it. That is what "staying agreed" costs.
+	writeCommit(t, dir, "a.go", brokenFixture, "a: breaks lint")
+	broken := NewRotation(context.Background(), "lezz", "agent-b", 62, dir)
+	lint, _ := broken.Invariant("lint")
+	if lint.Mark() != -1 {
+		t.Fatalf("a later claim did not cover an earlier contribution: %s", lint.Detail)
+	}
+
+	// A fix restores agreement without any claim being merged.
+	writeCommit(t, dir, "a.go", "package fixture\n\n// A is agent A's contribution, repaired.\nfunc A() int { return 1 }\n", "a: repair")
+	fixed := NewRotation(context.Background(), "lezz", "agent-b", 63, dir)
+	if fixed.Mark() != 1 {
+		t.Fatalf("agreement did not return after the repair: %s", fixed)
+	}
+}
+
+// writeCommit writes a file and commits it, so a partial contribution is a real
+// subject and not a dirty tree.
+func writeCommit(t *testing.T, dir, name, content, message string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", name},
+		{"-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", message},
+	} {
+		cmd := exec.Command("git", args...) //nolint:gosec // fixed argv in a test fixture
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+}
