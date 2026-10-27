@@ -154,6 +154,22 @@ func (r Rotation) Accept(claimCorrect bool) (bool, string) {
 	return true, "correct: every invariant holds"
 }
 
+// Applies reports whether this rotation may be applied at head.
+//
+// A rotation is portable across locations of one subject: the local HEAD and the
+// remote HEAD are the same commit, so a rotation verified in one checkout can be
+// prepared for the other without re-running the verifier. It is portable
+// nowhere else — if head has moved, the rotation describes bytes that are no
+// longer there, and applying it would attest a tree nobody verified.
+//
+// Portability is about the subject, not about authority: a rotation prepared
+// locally still names its verifier, so a remote that trusts only gated runs must
+// refuse it even though it applies.
+func (r Rotation) Applies(head string) bool {
+	subject := r.Subject()
+	return head != "" && subject != "" && subject == strings.TrimSpace(head)
+}
+
 // Subject is the commit every invariant was verified over. It is empty when the
 // layers disagree or when no verdict is bound, which is the state a tag cannot
 // be compared against.

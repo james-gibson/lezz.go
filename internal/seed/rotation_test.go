@@ -345,3 +345,71 @@ func worktree(t *testing.T, dir, name string) string {
 	}
 	return path
 }
+
+// TestARotationPreparedLocallyAppliesToTheRemote is the portability case: the
+// remote HEAD and the local HEAD are one subject, so a rotation verified in the
+// checkout can be prepared for the remote — and stops applying the moment the
+// remote moves.
+func TestARotationPreparedLocallyAppliesToTheRemote(t *testing.T) {
+	dir := gitFixture(t, cleanFixture, true)
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	init := exec.Command("git", "init", "-q", "--bare", remote) //nolint:gosec // fixed argv in a test fixture
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("bare init: %v %s", err, out)
+	}
+	push := exec.Command("git", "push", "-q", remote, "HEAD:refs/heads/main") //nolint:gosec // fixed argv in a test fixture
+	push.Dir = dir
+	if out, err := push.CombinedOutput(); err != nil {
+		t.Fatalf("push: %v %s", err, out)
+	}
+
+	rotation := NewRotation(context.Background(), "lezz", "agent-a", 40, dir)
+	if rotation.Subject() == "" {
+		t.Fatalf("no subject: %s", rotation)
+	}
+
+	remoteHead := headOf(t, remote, "refs/heads/main")
+	if !rotation.Applies(remoteHead) {
+		t.Fatalf("a rotation over the local HEAD does not apply to the remote: %q vs %q",
+			rotation.Subject(), remoteHead)
+	}
+	// Prepared for the remote: it stands, and it says who verified it.
+	if ok, reason := rotation.Accept(true); !ok {
+		t.Fatalf("the prepared rotation was refused: %s", reason)
+	}
+	lint, _ := rotation.Invariant("lint")
+	if lint.Verifier != "local:go-vet" {
+		t.Fatalf("portability dropped the verifier: %q", lint.Verifier)
+	}
+
+	// The remote moves: the old rotation describes bytes that are no longer there.
+	next := exec.Command("git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "next", "--allow-empty") //nolint:gosec // fixed argv in a test fixture
+	next.Dir = dir
+	if out, err := next.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	push = exec.Command("git", "push", "-q", remote, "HEAD:refs/heads/main") //nolint:gosec // fixed argv in a test fixture
+	push.Dir = dir
+	if out, err := push.CombinedOutput(); err != nil {
+		t.Fatalf("push: %v %s", err, out)
+	}
+	if rotation.Applies(headOf(t, remote, "refs/heads/main")) {
+		t.Fatal("a stale rotation applied to a remote that moved")
+	}
+	if !NewRotation(context.Background(), "lezz", "agent-a", 41, dir).Applies(headOf(t, remote, "refs/heads/main")) {
+		t.Fatal("a fresh rotation does not apply to the remote it was prepared from")
+	}
+}
+
+// headOf reads a ref from a repository.
+func headOf(t *testing.T, repo, ref string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", ref) //nolint:gosec // fixed argv in a test fixture
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse %s: %v", ref, err)
+	}
+	return strings.TrimSpace(string(out))
+}
