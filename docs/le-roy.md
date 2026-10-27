@@ -69,10 +69,10 @@ work to advance.
 
 ## Leeroy
 
-`le.roy jenkins --to NAME` **always yields**. It checks nothing: not the subject, not the
-verifiers, not the claimant. It is the named exception to "accepts the rotation challenge only",
-and it exists because an escape hatch that has to be *named* is auditable, while one that is
-merely undocumented is not.
+`le.roy jenkins --to NAME` **always yields**, and **always announces it on the network**. It
+checks nothing: not the subject, not the verifiers, not the claimant. It is the named exception
+to "accepts the rotation challenge only", and it exists because an escape hatch that has to be
+*named* is auditable, while one that is merely undocumented is not.
 
 The spelling is the joke (`le.roy` → Leeroy Jenkins, charging in), and the escaping is real:
 
@@ -84,6 +84,35 @@ The spelling is the joke (`le.roy` → Leeroy Jenkins, charging in), and the esc
   from *this agent's* judgement, not from the receiver's.
 
 So the honest sentence is: jenkins yields the work; it does not yield the evidence.
+
+## The announcement
+
+A yield that nobody sees is a private decision. So `jenkins` publishes the yield as an mDNS
+record, for as long as the process runs, and then withdraws it — a multicast burst, not a
+service:
+
+| field | value |
+|---|---|
+| service type | `_le-roy-yield._tcp` |
+| instance label | `le-roy-<claimant>-<tick>`, truncated to 63 bytes with a hash suffix |
+| address | **loopback**, and nothing served on it |
+| TXT | `v=1`, `verb=jenkins`, `claimant=…`, `tick=…`, `subject=<12 hex>`, `checked=false`, `tool=le.roy` |
+
+Three rules keep the drama from being an offence:
+
+- **The record is a claim, not a surface.** It names a loopback address with no listener, so a
+  peer learns *that* a yield happened and cannot connect to anything. The announcement is the
+  claim, never the payload: no seed, no path, no task content.
+- **A failed broadcast does not fail the yield.** If mDNS is unavailable the rotation is still
+  yielded, the output says `"announced": false` with the reason, and the exit code stays `0`.
+  The announcement is evidence of the handover, not a precondition of it.
+- **Awareness is opt-in.** A peer must browse `_le-roy-yield` to see it. "Network-level" means
+  multicast, not guaranteed delivery, and the record is gone when the process exits; whoever
+  needs a durable record keeps the JSON, not the record.
+
+`le.roy rotate` and `le.roy yield` do not announce: they are judgements, and a judgement is
+reported to its caller. Only the escape hatch shouts, which is exactly what makes it visible in
+a lab log when it happens.
 
 ## Output
 
@@ -108,8 +137,10 @@ One JSON object on stdout, one line, so it composes with a pipe and with Gherkin
 }
 ```
 
-A `jenkins` output carries `"verb": "jenkins"`, `"checked": false` and the same rotation shape;
-its invariants are recomputed but marked unchecked, so a reader cannot mistake them for a verdict.
+A `jenkins` output carries `"verb": "jenkins"`, `"checked": false`, the same rotation shape, and
+an `"announced"` object — `{"type": "_le-roy-yield._tcp", "instance": "le-roy-agent-b-41",
+"published": true}` or the failure reason. Its invariants are recomputed but marked unchecked, so
+a reader cannot mistake them for a verdict.
 
 Exit codes: `0` accepted, `2` refused (the challenge was understood and declined), `1` usage or
 I/O. Nothing is written to the workspace, no state file is created, and there is no history: a
@@ -172,6 +203,21 @@ Scenario: le.roy jenkins always yields
   And the claimant is agent-b
   And it says the rotation was not checked
   And it does not report the rotation as correct
+
+Scenario: le.roy jenkins announces the yield on the network
+  Given a clean workspace and an mDNS responder
+  When I run "le.roy jenkins --to agent-b"
+  Then it publishes a "_le-roy-yield._tcp" record
+  And the record names the claimant, the tick and a short subject
+  And the record advertises a loopback address that serves nothing
+  And the record carries no content
+
+Scenario: a failed announcement does not fail the yield
+  Given mDNS is unavailable
+  When I run "le.roy jenkins --to agent-b"
+  Then it exits 0
+  And the output says nothing was announced
+  And the rotation is still yielded to agent-b
 
 Scenario: an asserted pass is not a verdict
   Given a rotation document that claims "pass": true with no verifier

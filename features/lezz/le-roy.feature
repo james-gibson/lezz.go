@@ -76,6 +76,24 @@ Feature: le.roy rotates or yields, and accepts nothing else
     And the rotation is marked unchecked
     And it does not report the rotation as correct
 
+  Scenario: le.roy jenkins announces the yield on the network
+    Given a clean workspace at a commit
+    And an mDNS responder is reachable
+    When I run "le.roy jenkins --to agent-b"
+    Then it publishes a "_le-roy-yield._tcp" record
+    And the record names the claimant "agent-b", the tick and a short subject
+    And the record advertises a loopback address
+    And it serves nothing on that address
+    And the record carries no seed and no task content
+
+  Scenario: a failed announcement does not fail the yield
+    Given a clean workspace at a commit
+    And mDNS is unavailable
+    When I run "le.roy jenkins --to agent-b"
+    Then it exits 0
+    And the output says nothing was announced
+    And the rotation is still yielded to "agent-b"
+
   Scenario: a receiver refuses an unchecked yield
     Given a yield that says the rotation was not checked
     When the receiver runs "le.roy check" on it
