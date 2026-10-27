@@ -114,6 +114,36 @@ Three rules keep the drama from being an offence:
 reported to its caller. Only the escape hatch shouts, which is exactly what makes it visible in
 a lab log when it happens.
 
+## Chaos, and the counter-rotation
+
+At this point `jenkins` stops looking like a joke and starts looking like a fault injector, because
+that is what it is: **a counter-rotation**. A rotation advances the claim in phase with the
+schedule; a counter-rotation takes the claim away from whoever holds it, without checking, and
+hands it to someone else. The schedule did not ask for it and the holder did not offer it.
+
+That is exactly what a chaos run needs, and exactly what makes it dangerous if it is not declared:
+
+- **The control node withholds the test from the children.** They must not know that a perturbance
+  is coming, or they would behave for the test rather than as they are. Blinding is the whole
+  point: the measurement is their reaction to a claim moving under them.
+- **The control node cannot withhold the announcement.** `jenkins` always publishes
+  `_le-roy-yield`, so the perturbance is visible to anyone browsing while the subjects are not
+  told. That asymmetry is the honest form: **the world is told that an invariant is being tested;
+  only the subject is kept blind.**
+- **The invariant is declared before the run.** A counter-rotation with no stated invariant is
+  indistinguishable from an attack and its result is unfalsifiable; the announcement is what keeps
+  the difference (`kb/scripts/lab/DECLARATION-CHAIN.md` § *Chaos announces its invariant*).
+
+So the discipline is one sentence: **declare the invariant to the verifiers, withhold the
+perturbance from the subject.** In this tool the first half is structural — `jenkins` has no way to
+suppress its record — so a blind run is still an announced run, and an unannounced
+counter-rotation is not something `le.roy` can do.
+
+What it must never be used for: making progress. `jenkins` in a normal handover is an escape hatch
+that skips the challenge; `jenkins` in a chaos run is a deliberate, declared perturbation. The verb
+is the same and the announcement is the same; only the claim the operator makes about it differs,
+which is why the run's invariant has to be written down somewhere a verifier can read.
+
 ## Output
 
 One JSON object on stdout, one line, so it composes with a pipe and with Gherkin assertions:

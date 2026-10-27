@@ -94,6 +94,20 @@ Feature: le.roy rotates or yields, and accepts nothing else
     And the output says nothing was announced
     And the rotation is still yielded to "agent-b"
 
+  Scenario: a counter-rotation is declared to the network and withheld from the subject
+    Given a control node rotating work with a child claimant
+    And the control node has declared the invariant before the run
+    When the control node runs "le.roy jenkins --to agent-b"
+    Then the child is not told that a rotation is being tested
+    And the network carries a "_le-roy-yield._tcp" record for the run
+    And the record names the claimant, the tick and a short subject
+    And the child's reaction is measured against the declared invariant
+
+  Scenario: an unannounced counter-rotation is a finding
+    Given a claim moved without a "_le-roy-yield._tcp" record
+    Then it is a finding rather than a test
+    And its result is not evidence
+
   Scenario: a receiver refuses an unchecked yield
     Given a yield that says the rotation was not checked
     When the receiver runs "le.roy check" on it
