@@ -164,6 +164,19 @@ Feature: One adhd session hub for the lezz.sea lab
     Then there is no disagreement to reflect
     And the comparison of their presigned claims is what supplies evidence
 
+  Scenario: parity predicts which replica answers next
+    Given a task is total and replica-independent, so only the epoch varies
+    And the epoch for the next tick is presigned
+    When an agent reads that epoch
+    Then it knows which replica answers next
+    And two replicas computing the same answer differ only when their epochs differ
+
+  Scenario: a server-chosen epoch cannot steer the prediction
+    Given the epoch is chosen by the replica that answers
+    Then a parity prediction is the replica's preference, not evidence
+    When the epoch is presigned instead
+    Then the prediction is checkable and cannot be steered
+
   Scenario: a stop request never stops the hub
     Given lezz sea is running with a session hub
     And cluster "demo-123" has joined the hub
