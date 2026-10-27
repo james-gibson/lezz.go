@@ -137,7 +137,7 @@ then the shared range", removes the race.
 | D2 | The hub endpoint is authoritative when the channel is active; a Finder launch keeps the typed/default endpoint. | The app stops guessing 9090 without losing its standalone mode. |
 | D3 | lezz calls `adhd.cluster.join` on the hub for each child, reusing `clusterJoinParams` (`internal/demo/cluster.go:251`) with `alarm_a` = the cluster's first member and `adhd_mcp` = the child endpoint. | The payload and the handler already agree; no new wire contract. |
 | D4 | Children start `adhd --headless --config … --prime-plus --prime-addr http://127.0.0.1:<hub>/mcp`. | Log aggregation on the existing method; light path is D3. |
-| D5 | The hub carries one `smoke_alarm` entry: lezz's loopback channel status. | The only way to get a channel light without an adhd write path (§2b). Needs sign-off: it retires "empty". |
+| D5 | **Decided.** The hub carries one `smoke_alarm` entry: lezz's loopback channel status. | The only way to get a channel light without an adhd write path (§2b). It retires "empty": the hub is the session's adhd plus the channel source, and nothing else. |
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
 | D8 | Seed→isotope grouping ships after the hub, not with it. | It needs an adhd TXT change and an app parse; keeping it separate keeps the hub reviewable. |
@@ -185,9 +185,10 @@ advertisement named.
 
 ## Questions for the owner
 
-1. **D5**: does the hub get one `smoke_alarm` entry (the channel source), or does adhd gain a
-   light-ingest tool? Everything else about item 2 depends on this.
-2. **Phase 5 scope**: is same-host mDNS enough for now, or should the hub be gated for LAN
+D5 is settled: the hub watches a loopback status endpoint that lezz serves, and gains no adhd
+write path. Still open:
+
+1. **Phase 5 scope**: is same-host mDNS enough for now, or should the hub be gated for LAN
    discovery?
-3. **Collapse surface**: the sidebar only, or also the Lights panel's per-cluster grouping
+2. **Collapse surface**: the sidebar only, or also the Lights panel's per-cluster grouping
    (which is where the doubling in `adhd#49` is most visible)?
