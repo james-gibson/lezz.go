@@ -27,7 +27,7 @@ const (
 )
 
 // Message is the wire shape in both directions. Type decides which fields are
-// meaningful: "hello", "request" or "reply".
+// meaningful: "hello", "request", "reply" or "hub".
 type Message struct {
 	V    int    `json:"v"`
 	Type string `json:"type"`
@@ -50,6 +50,9 @@ type Message struct {
 	OK    *bool  `json:"ok,omitempty"`
 	Error string `json:"error,omitempty"`
 	ADHD  *ADHD  `json:"adhd,omitempty"`
+
+	// hub
+	Hub *Hub `json:"hub,omitempty"`
 }
 
 // Member is one alarm the app asks lezz.go to start. Config is the derived
@@ -61,12 +64,23 @@ type Member struct {
 }
 
 // ADHD is the pairing result: where adhd answers, and the files it owns.
+//
+// HubEndpoint names the session hub the cluster joined. It is additive: an app
+// that ignores it still has the cluster endpoint it asked for.
 type ADHD struct {
-	Endpoint   string `json:"endpoint,omitempty"`
-	Port       int    `json:"port,omitempty"`
-	ConfigPath string `json:"configPath,omitempty"`
-	PIDPath    string `json:"pidPath,omitempty"`
+	Endpoint    string `json:"endpoint,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	ConfigPath  string `json:"configPath,omitempty"`
+	PIDPath     string `json:"pidPath,omitempty"`
+	HubEndpoint string `json:"hubEndpoint,omitempty"`
 }
+
+// Message types the supervisor sends.
+const (
+	// TypeHub announces the session hub. It is additive: the app drops lines
+	// whose id it is not waiting for, so an older build ignores it.
+	TypeHub = "hub"
+)
 
 // Wants accepted by the supervisor.
 const (

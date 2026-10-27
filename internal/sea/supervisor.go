@@ -21,11 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +67,8 @@ type supervisor struct {
 	stdin    io.WriteCloser
 	writeMu  sync.Mutex
 	children map[string]*child // keyed by pid path
+	ports    *portAllocator
+	hub      *Hub
 	lost     bool
 }
 
@@ -109,6 +111,25 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return fmt.Errorf("%s: %w (run: lezz sea install)", exe, statErr)
 	}
 
+	s := &supervisor{
+		opts:     opts,
+		binder:   binder,
+		children: make(map[string]*child),
+		ports:    newPortAllocator(),
+	}
+	// The hub starts before the app: the app's default endpoint is announced,
+	// not guessed, and a hub that fails to start must not leave an app waiting
+	// on a port nobody bound.
+	if adhd, findErr := opts.FindTool("adhd"); findErr != nil {
+		s.progressf("hub: %v — install it with lezz install adhd (continuing without a session hub)", findErr)
+	} else if hub, hubCmd, hubErr := startHub(binder.Root, adhd, "", s.ports); hubErr != nil {
+		s.progressf("hub: %v (continuing without a session hub)", hubErr)
+	} else {
+		s.hub = hub
+		s.children[hub.PIDPath] = &child{cmd: hubCmd, cluster: HubSlug, pidPath: hub.PIDPath, kind: "hub"}
+		s.progressf("session hub: %s", hub.Endpoint)
+	}
+
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("stdin pipe: %w", err)
@@ -147,12 +168,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	_ = stdinR.Close()
 	_ = stdoutW.Close()
 
-	s := &supervisor{
-		opts:     opts,
-		binder:   binder,
-		stdin:    stdinW,
-		children: make(map[string]*child),
-	}
+	s.stdin = stdinW
 	defer func() {
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
@@ -171,9 +187,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 	for {
 		select {
 		case <-ctx.Done():
-			s.cleanup()
 			stopApp(cmd)
 			waitForExit(cmd, waitCh)
+			s.cleanup()
 			return ctx.Err()
 
 		case err := <-waitCh:
@@ -182,9 +198,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 		case msg, ok := <-messages:
 			if !ok {
-				s.cleanup()
 				stopApp(cmd)
 				waitForExit(cmd, waitCh)
+				s.cleanup()
 				return nil
 			}
 			s.handle(msg)
@@ -215,6 +231,7 @@ func (s *supervisor) handle(msg Message) {
 	switch msg.Type {
 	case "hello":
 		s.progressf("connected: %s", msg.Version)
+		s.announceHub()
 	case "request":
 		s.reply(s.dispatch(msg))
 	default:
@@ -335,7 +352,7 @@ func (s *supervisor) startADHD(msg Message) Message {
 		return ReplyError(msg.ID, fmt.Sprintf("%v — install it with lezz install adhd", err))
 	}
 
-	port, err := freePort(9190, 9289)
+	port, err := s.ports.acquire(0)
 	if err != nil {
 		return ReplyError(msg.ID, "adhd: "+err.Error())
 	}
@@ -371,6 +388,9 @@ func (s *supervisor) startADHD(msg Message) Message {
 		ConfigPath: configPath,
 		PIDPath:    pidPath,
 	}
+	if s.hub != nil {
+		reply.ADHD.HubEndpoint = s.hub.Endpoint
+	}
 	return reply
 }
 
@@ -378,13 +398,17 @@ func (s *supervisor) stop(msg Message) error {
 	if !safeName(msg.Cluster) {
 		return fmt.Errorf("stop: cluster name %q is not a slug", msg.Cluster)
 	}
+	// The hub outlives every cluster: it is stopped when the app exits, last.
+	if msg.Cluster == HubSlug {
+		return fmt.Errorf("stop: %s is the session hub; it stops when lezz.sea exits", HubSlug)
+	}
 	clusterDir := filepath.Join(s.binder.Root, msg.Cluster)
 	var errs []string
 
 	// Anything this supervisor started is stopped by handle first: a pid file
 	// read later could already name a recycled process.
 	for path, entry := range s.children {
-		if entry.cluster != msg.Cluster {
+		if entry.cluster != msg.Cluster || entry.kind == "hub" {
 			continue
 		}
 		terminateGroup(entry.cmd)
@@ -477,12 +501,46 @@ func (s *supervisor) stopChildren(children []*child) {
 	}
 }
 
+// cleanup stops everything the supervisor started, in the order the topology
+// implies: every cluster first, the session hub last. The order is explicit
+// rather than a map iteration so a failure to stop a child cannot take the hub
+// down with it.
 func (s *supervisor) cleanup() {
-	for path, entry := range s.children {
+	for _, path := range s.stopOrder() {
+		entry, ok := s.children[path]
+		if !ok {
+			continue
+		}
 		terminateGroup(entry.cmd)
 		_ = os.Remove(path)
 		delete(s.children, path)
 	}
+}
+
+// stopOrder lists pid paths children-first, hub-last. Cluster children are
+// sorted so the order is deterministic; the hub is appended once at the end.
+func (s *supervisor) stopOrder() []string {
+	var clusters, hubs []string
+	for path, entry := range s.children {
+		if entry.kind == "hub" {
+			hubs = append(hubs, path)
+			continue
+		}
+		clusters = append(clusters, path)
+	}
+	sort.Strings(clusters)
+	sort.Strings(hubs)
+	return append(clusters, hubs...)
+}
+
+// announceHub tells the app where the session hub answers. It is sent once,
+// after the app's hello: the app has no id for it, and the current build drops
+// lines it is not waiting for, so the message is additive.
+func (s *supervisor) announceHub() {
+	if s.hub == nil {
+		return
+	}
+	s.reply(Message{V: ProtocolVersion, Type: TypeHub, Hub: s.hub})
 }
 
 func (s *supervisor) reply(msg Message) {
@@ -569,18 +627,6 @@ func waitForExit(cmd *exec.Cmd, waitCh <-chan error) {
 		killProcessGroup(cmd)
 		<-waitCh //nolint:errcheck // draining the one-shot result after the kill
 	}
-}
-
-func freePort(low, high int) (int, error) {
-	for port := low; port <= high; port++ {
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			continue
-		}
-		_ = listener.Close()
-		return port, nil
-	}
-	return 0, fmt.Errorf("no free port in %d–%d", low, high)
 }
 
 func adhdConfig(slug string, healthPorts []int, mcpPort int, gherkin string) string {
