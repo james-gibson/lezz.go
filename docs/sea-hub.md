@@ -75,7 +75,11 @@ that already owns the facts.
 flag but documenting what it accepts is the low-risk option; renaming is a public-flag change
 and belongs in its own PR.
 
-## 3. The comment: announce an mDNS isotope; collapse by seed then isotope
+## 3. The comment: announce an mDNS isotope, and show work groups
+
+The comment on #66 asks for an mDNS isotope announcement and for sea to "collapse what we see
+… by seed then isotope". The announcement is right; the second half is a rotation problem, not a
+taxonomy — read it as *show work groups*, with isotopes rotating through them.
 
 **Today the hub is undiscoverable.** adhd registers and advertises only when it has a smoke
 target: `resolveSmokeAlarm` (`adhd/cmd/adhd/main.go:174`) gates `RegisterAsIsotope`
@@ -92,25 +96,53 @@ What "announce an isotope" requires, and its limit:
   non-loopback one without `--force`. A loopback-bound hub's record names an address that only
   means anything on this host, so this buys **same-host** discovery — which is every child
   `lezz sea` starts. **Decided: same-host only, until federation is enabled** (see below).
-- The TXT record is `v=1`, `role=`, `trust_rung=` (`isotope/mdns.go:25`). There is no seed and
-  no isotope identity in it, so "collapse by seed then isotope" is not answerable from the
-  advertisement today. It needs `seed=` (the project route, or the seed id when no route is
-  declared — the same precedence adhd already uses for registration,
-  `headless/project_identity.go:37`) and `isotope=` (the full identity `instanceLabel` truncates
-  to eight characters, `headless/server.go:682`).
+- The TXT record is `v=1`, `role=`, `trust_rung=` (`isotope/mdns.go:25`): it carries neither a
+  route nor an identity a member can be placed by. It needs at least the scope the member serves
+  (adhd already resolves a project route from config, `LEZZ_PROJECT_ROUTE` or `seed.json`,
+  `headless/project_identity.go:37`) and its isotope identity (the full id — `instanceLabel`
+  truncates it to eight characters, `headless/server.go:682`). The rotation claim is a further
+  field, and adhd has nothing to put in it yet (§ below).
 - The app keys Bonjour results by `service.name` and discards TXT
   (`LezzSea/Services/BonjourDiscovery.swift:50`), and the sidebar lists every cluster flat
   (`LezzSea/Views/ClusterSidebar.swift:15`). With a hub plus N children, #48's per-instance
   labels turn into N+1 anonymous rows.
 
-**The collapse rule is already written down, and it is not "group by name."** `kb/scripts/lab/ISOTOPE-COLLAPSE.md`
-establishes that a name is the hot path and an endpoint is shared by design; the inventory keys
-on route id and claimant, keeps the replica set visible, and never collapses a shielded route.
-Applied here: group by **seed** (the session/project scope), then by **isotope** (the instance
-identity), and keep each instance addressable underneath. An advertisement with no seed stays
-ungrouped and named — fail closed, not merged. Two instances that share an endpoint are never
-one row. `adhd#49` is the same defect seen from the other side: a self-join doubles lights
-because the watcher keys on name rather than route.
+**What sea shows is a work group, and the reason is rotation.** A route is `RouteRef{Scope, Tool}`,
+whose id is invariant across both replicas and rotation
+(`smoke-alarm/internal/mcp_faults/rotation_verify.go:60`, `:67`). The cluster rotates every
+`ClusterRotationPeriod = 5s` with a `DefaultGraceWindow = 1s`
+(`internal/mcp_faults/tool_proxy.go:95`), and a rotation is announced as a claim —
+`{node_id, rotated_at, grace, prefix, route_id}` (`rotation_verify.go:41`, `:291`) — which a
+mirror verifies. The replicas of one route are a work group (`RouteRegistry` holds route id →
+node ids, `:84`), and the group is what persists: its **members rotate through it**.
+
+So the sea view is not a seed→isotope tree; it is work groups with rotating membership:
+
+- **The row is the work group** — the route — not an advertisement, a cluster name, or an
+  isotope id. adhd#48 made instance labels per process, so a name-keyed list shows one route as
+  a new row on every rotation: churn, not inventory.
+- **Members are isotopes at a rotation.** Show the current claimant and its rotation state (last
+  claim, inside grace or expired); a silent member ages out of the group rather than deleting it.
+- **Announcement is load-bearing, not directory service.** An unannounced rotation is a finding,
+  not a test (`kb/scripts/lab/DECLARATION-CHAIN.md` § *Chaos announces its invariant*). A child
+  spawned outside `lezz sea` that never announces has no work group to land in — which is what
+  the comment on #66 is actually asking for.
+- **Fail closed.** A member that cannot name its route stays a named, declared row, and two
+  members that merely share an endpoint are never merged (`kb/scripts/lab/ISOTOPE-COLLAPSE.md`).
+  `adhd#49` is the same defect from the other side: a self-join keys a light by name and shows
+  one route twice.
+
+**What the advertisement must carry, and what exists today.** To place a member in a work group
+and verify its claim, an advertisement needs a route identity (scope + capability), a node
+identity, and the rotation claim. adhd can supply the scope today — the project route, resolved
+from config, `LEZZ_PROJECT_ROUTE` or `seed.json` (`headless/project_identity.go:37`) — and its
+per-process isotope identity. It cannot supply a route id or a rotation: there is no epoch or
+prefix anywhere in adhd's `internal/` or `cmd/`, and the TXT record is only `v=1`, `role=`,
+`trust_rung=` (`isotope/mdns.go:25`). smoke-alarm computes both halves — `ToolProxy.RouteID()`
+and `Announcement()` — but does not expose them on a target yet (the open item in
+`ISOTOPE-COLLAPSE.md` § *Next*). So Phase 5 groups by the route adhd *can* name, and carries the
+rotation claim when one exists; until then, a second advertisement for one route is a second
+claimant in the same group, which is the behaviour to build the row around.
 
 ### Federation is the upstream, and the only LAN path
 
@@ -163,7 +195,7 @@ then the shared range", removes the race.
 | D5 | **Decided.** The hub carries one `smoke_alarm` entry: lezz's loopback channel status. | The only way to get a channel light without an adhd write path (§2b). It retires "empty": the hub is the session's adhd plus the channel source, and nothing else. |
 | D6 | The hub binds `127.0.0.1` only, never `--force`, never advertised beyond loopback. | `adhd.proxy` has no target allowlist (`internal/proxy/proxy.go:56`); a reachable hub is a confused deputy. |
 | D7 | A `stop` request never stops the hub; only app exit or Ctrl-C does, last. | The hub outlives any one cluster. |
-| D8 | Seed→isotope grouping ships after the hub, not with it. | It needs an adhd TXT change and an app parse; keeping it separate keeps the hub reviewable. |
+| D8 | Work-group grouping ships after the hub, not with it. | It needs an adhd TXT change, a scope on the advertisement, and an app parse; keeping it separate keeps the hub reviewable. |
 | D9 | **Decided.** The hub advertises same-host only until federation is enabled; the mesh's upstream registry is the LAN path. | Federation introduces an upstream cluster and its own membership trust; widening the hub's bind would add an exposure the mesh does not need. |
 
 ## Work, in order
@@ -191,11 +223,14 @@ expected status document, and the hub config names it.
 `ScenarioLab` stores `{hub, child}`; the Lights panel reads the hub; the Scenarios row reads the
 child through `adhd.proxy`; the app/channel light is shown with the cluster lights.
 
-**Phase 5 — discovery and collapse (adhd + lezz.sea).**
-adhd advertises without a registry and adds `seed=` / `isotope=` to the TXT record;
-`BonjourDiscovery` parses TXT; the sidebar groups seed → isotope and leaves an ungrouped
-advertisement named. The advertisement is loopback-scoped (D9): it is not the LAN path and must
-not be widened to become one.
+**Phase 5 — discovery and work groups (adhd + lezz.sea).**
+adhd advertises without a registry and adds scope (project route) and its isotope identity to
+the TXT record; `BonjourDiscovery` parses TXT; the sidebar groups by work group (route) with its
+members underneath, ages a silent member out, and leaves a route-less advertisement named. A
+repeated advertisement for one route joins the existing group as another claimant. The
+advertisement is loopback-scoped (D9): it is not the LAN path and must not be widened to become
+one. Rotation state is shown when a claim exists; carrying the claim itself needs adhd to grow
+one and smoke-alarm to expose `route.identity` — not Phase 5.
 
 **Phase 6 — enrolment in a federation (deferred).**
 When federation lands, the hub registers with a mesh member's smoke-alarm and is discovered
@@ -219,5 +254,6 @@ D5 is settled: the hub watches a loopback status endpoint that lezz serves, and 
 write path. D9 is settled: same-host mDNS until federation, which supplies the upstream registry
 and stays in user land. Still open:
 
-1. **Collapse surface**: the sidebar only, or also the Lights panel's per-cluster grouping
-   (which is where the doubling in `adhd#49` is most visible)?
+1. **Work-group surface**: the sidebar only, or the Lights panel too — which is where
+   `adhd#49`'s doubling of one route is most visible, and where grouping would also need the
+   light name to carry the route rather than the watcher's source name.

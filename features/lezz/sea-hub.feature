@@ -129,11 +129,23 @@ Feature: One adhd session hub for the lezz.sea lab
     When the app asks to stop "demo-123"
     Then the hub keeps answering "adhd.status"
 
-  Scenario: discovered isotopes collapse by seed and then by isotope
-    Given a smoke-alarm is running with three registered adhd isotopes
-    And two of them declare the seed "lezz.go"
-    And one of them declares no seed
-    When the app lists discovered isotopes
-    Then the two with the seed "lezz.go" share one seed group
-    And each of them stays addressable as its own isotope
-    And the one with no seed stays a named, ungrouped row
+  Scenario: a rotation does not add a row
+    Given the app shows the work group for route "lezz.go/peer"
+    And its current claimant is "adhd-7c1d0a4e"
+    When that claimant rotates to "adhd-9f2b31c8"
+    Then the work group is still one row
+    And the new claimant is shown as current
+    And the previous claimant is shown as rotated out
+
+  Scenario: a silent member ages out of its work group
+    Given a work group for route "lezz.go/peer" has two claimants
+    And one of them stops announcing
+    When a rotation period passes without a claim from that member
+    Then that member ages out of the work group
+    And the work group still shows its remaining claimant
+    And the work group row is not removed
+
+  Scenario: a member that cannot name its route stays declared
+    Given an advertisement carries an isotope identity and no route
+    Then it is listed as a named, ungrouped row
+    And it is not merged with a member that shares its endpoint
