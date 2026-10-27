@@ -564,11 +564,10 @@ func stopApp(cmd *exec.Cmd) {
 
 func waitForExit(cmd *exec.Cmd, waitCh <-chan error) {
 	select {
-	case err := <-waitCh:
-		_ = err
+	case <-waitCh: //nolint:errcheck // the app already exited; the error was returned by the caller's path
 	case <-time.After(3 * time.Second):
 		killProcessGroup(cmd)
-		_ = <-waitCh
+		<-waitCh //nolint:errcheck // draining the one-shot result after the kill
 	}
 }
 
