@@ -43,8 +43,14 @@ type Start struct {
 
 // Project identifies the local project. Repo is provenance only and carries no
 // authentication.
+//
+// Route is the routing id a dependent resolves the project by (ADR 0003). It is
+// the same arbitrary, validated value as the legacy Seed.ID and is written
+// alongside it, so a reader that knows only seed.id still works; Route is
+// preferred when both are present.
 type Project struct {
 	Name   string `json:"name"`
+	Route  string `json:"route,omitempty"`   // routing id; seed.id is the legacy alias
 	Repo   string `json:"repo,omitempty"`    // provenance only, not auth
 	MCPURL string `json:"mcp_url,omitempty"` // optional project surface
 }
@@ -78,9 +84,28 @@ func New(projectName, surface string) (*File, error) {
 			Surface: surface,
 			Start:   Start{Real: 42, Imaginary: 0, Rung: 0},
 		},
-		Project: Project{Name: projectName},
+		Project: Project{Name: projectName, Route: id},
 		Auth:    Auth{Mode: "external", Ref: "env:LEZZ_CLUSTER_KEY"},
 	}, nil
+}
+
+// Route returns the project's routing id: project.route when it is set, else the
+// legacy seed.id (ADR 0003). It never returns the project name, which is a
+// label — two projects may share one.
+func (f *File) Route() string {
+	if route := strings.TrimSpace(f.Project.Route); route != "" {
+		return route
+	}
+	return f.Seed.ID
+}
+
+// MintRoute returns a fresh routing id in the same shape seed.id has always
+// had: a UTC timestamp and four random bytes. It is for a caller that has no
+// seed.json to read — lezz's demo mints one per project it launches — and must
+// be persisted by that caller, because a route that changes per start renames
+// the project it was meant to pin.
+func MintRoute() (string, error) {
+	return newID()
 }
 
 // Validate rejects a seed that cannot be used safely.
@@ -90,6 +115,9 @@ func (f *File) Validate() error {
 	}
 	if !idPattern.MatchString(f.Seed.ID) {
 		return fmt.Errorf("seed: invalid id %q (use letters, digits, _ . -)", f.Seed.ID)
+	}
+	if f.Project.Route != "" && !idPattern.MatchString(f.Project.Route) {
+		return fmt.Errorf("seed: invalid project.route %q (use letters, digits, _ . -)", f.Project.Route)
 	}
 	if strings.TrimSpace(f.Seed.Surface) == "" {
 		return errors.New("seed: surface is required")

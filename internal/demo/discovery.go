@@ -23,10 +23,11 @@ const mdnsDomain = "local."
 
 // ProjectEntry describes a project within a cluster that exposes an MCP server.
 type ProjectEntry struct {
-	ID     string `json:"id,omitempty"` // stable seed id; namespaces the tool
-	Name   string `json:"name"`         // short name, e.g. "tuner", "adhd"
-	Repo   string `json:"repo"`         // GitHub slug, e.g. "james-gibson/tuner"
-	MCPURL string `json:"mcp_url"`      // base URL of the project's MCP server
+	Route  string `json:"route,omitempty"` // routing id a dependent resolves by (ADR 0003)
+	ID     string `json:"id,omitempty"`    // legacy alias for Route; namespaces the tool
+	Name   string `json:"name"`            // short name, e.g. "tuner", "adhd"
+	Repo   string `json:"repo"`            // GitHub slug, e.g. "james-gibson/tuner"
+	MCPURL string `json:"mcp_url"`         // base URL of the project's MCP server
 }
 
 // ClusterInfo describes a running demo cluster.

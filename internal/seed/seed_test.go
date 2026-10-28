@@ -92,3 +92,67 @@ func TestResolveAuthKeychainMissing(t *testing.T) {
 		t.Fatal("missing keychain item reported present")
 	}
 }
+
+// TestNewMintsProjectRoute pins the additive half of ADR 0003: a new seed
+// declares project.route with the same value as the legacy seed.id, so a reader
+// that knows only one of them resolves the same project.
+func TestNewMintsProjectRoute(t *testing.T) {
+	f, err := New("local-time", "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Project.Route == "" {
+		t.Fatal("new seed has no project.route")
+	}
+	if f.Project.Route != f.Seed.ID {
+		t.Fatalf("project.route %q != seed.id %q", f.Project.Route, f.Seed.ID)
+	}
+	if got := f.Route(); got != f.Seed.ID {
+		t.Fatalf("Route() = %q, want %q", got, f.Seed.ID)
+	}
+}
+
+// TestRouteFallsBackToLegacyID covers every seed.json written before ADR 0003:
+// it has seed.id and no project.route, and must still resolve.
+func TestRouteFallsBackToLegacyID(t *testing.T) {
+	f, _ := New("legacy", "base")
+	f.Project.Route = ""
+	if got := f.Route(); got != f.Seed.ID {
+		t.Fatalf("legacy Route() = %q, want seed.id %q", got, f.Seed.ID)
+	}
+}
+
+// TestRoutePrefersProjectRoute covers a file where the two disagree: the ADR
+// says prefer project.route rather than merging.
+func TestRoutePrefersProjectRoute(t *testing.T) {
+	f, _ := New("modern", "base")
+	f.Project.Route = "20261019T210927-09001816"
+	if got := f.Route(); got != "20261019T210927-09001816" {
+		t.Fatalf("Route() = %q, want project.route", got)
+	}
+}
+
+func TestValidateRejectsBadRoute(t *testing.T) {
+	f, _ := New("x", "base")
+	f.Project.Route = "has space"
+	if err := f.Validate(); err == nil {
+		t.Fatal("expected invalid project.route refusal")
+	}
+}
+
+func TestMintRouteIsAddressable(t *testing.T) {
+	seen := make(map[string]struct{}, 8)
+	for i := 0; i < 8; i++ {
+		route, err := MintRoute()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !idPattern.MatchString(route) {
+			t.Fatalf("minted route %q is not addressable", route)
+		}
+		if _, dup := seen[route]; dup {
+			t.Fatalf("minted route %q twice", route)
+		}
+		seen[route] = struct{}{}
+	}
+}
