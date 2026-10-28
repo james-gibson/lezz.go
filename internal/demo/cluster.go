@@ -265,12 +265,18 @@ func clusterJoinParams(info ClusterInfo) []byte {
 			if id == "" {
 				id = p.Name
 			}
-			projs = append(projs, map[string]interface{}{
+			entry := map[string]interface{}{
 				"id":      id,
 				"name":    p.Name,
 				"repo":    p.Repo,
 				"mcp_url": p.MCPURL,
-			})
+			}
+			// route is what adhd resolves a project by; a payload without one is
+			// a legacy caller whose projects are namespaced by id (ADR 0003).
+			if route := p.Route; route != "" {
+				entry["route"] = route
+			}
+			projs = append(projs, entry)
 		}
 		params["projects"] = projs
 	}

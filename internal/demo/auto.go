@@ -342,7 +342,19 @@ func RunAuto(ctx context.Context) error {
 	// lezz owns the static config and the process; the cluster only sees the
 	// loopback HTTP endpoint. Starting before the alarms means the URL exists
 	// when the skill is registered and published to adhd.
-	bridges, err := startBridges(ctx, tmpRoot)
+	//
+	// Each skill is announced as a project with a route that outlives this
+	// cluster, so a dependent resolves it by route rather than by the name or
+	// URL this run happened to use.
+	routesPath, err := projectRoutesFile()
+	if err != nil {
+		return err
+	}
+	routes, err := newProjectRoutes(routesPath)
+	if err != nil {
+		return err
+	}
+	bridges, err := startBridges(ctx, tmpRoot, routes)
 	if err != nil {
 		return err
 	}

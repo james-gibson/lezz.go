@@ -28,6 +28,7 @@ externally verified rung supplied at boot (pre-hydration).
   },
   "project": {
     "name": "local-time",
+    "route": "20261019T200001-dd876f90",
     "repo": "james-gibson/local-time"
   },
   "auth": {
@@ -38,6 +39,12 @@ externally verified rung supplied at boot (pre-hydration).
 }
 ```
 
+- `project.route` — the routing id a dependent resolves the project by
+  ([ADR 0003](adr/0003-seed-is-the-ground-truth.md)). It is the same value as
+  `seed.id`, written under the new name; a reader prefers `project.route` and
+  falls back to `seed.id` for files written before the rename. `lezz demo`
+  mints one for every project it launches and remembers it in
+  `~/.lezz/lab/projects/routes.json`, so a restart does not rename the project.
 - `seed.id` — stable project id. **Not** a GitHub identity, not derived from a
   repo or username. It namespaces the dynamic tool:
   `adhd.project.<id>.call`.
@@ -102,6 +109,12 @@ surface.
 - Legacy payloads without `id` fall back to the name (existing behaviour).
 - Two projects named `grep` with ids `01JA`/`01JB` now produce two tools instead
   of the silent collision in #40.
+- `ProjectEntry` also carries `route` (ADR 0003, lezz.go#62), and
+  `clusterJoinParams` sends it beside `id`; adhd prefers `route` and falls back
+  to `id`, so a project resolved by route survives a restart that changes its
+  name or MCP URL. The demo mints a route for each project it starts, exports it
+  to the child as `LEZZ_PROJECT_ROUTE`, and keeps it in
+  `~/.lezz/lab/projects/routes.json`.
 
 ## Never touch the GitHub identity (implemented as a constraint)
 
