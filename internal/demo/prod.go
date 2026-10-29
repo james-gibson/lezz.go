@@ -74,6 +74,12 @@ type ProdOptions struct {
 	// Rotate installs the next generation as a service and hands off after
 	// the cluster is up. SIGHUP does the same thing at runtime.
 	Rotate bool
+	// RegistryBind is the host the anchor registry listens on. Empty is
+	// loopback (RegistryBindDefault): prod's nodes are all local, and the
+	// registry is an unauthenticated directory, so publishing it to the LAN is
+	// an operator decision (lezz.go#59). It is carried into a rotated child, so
+	// a handoff does not quietly change who can reach the registry.
+	RegistryBind string
 	// RotateTimeout bounds the wait for the child's registry after handoff.
 	RotateTimeout time.Duration
 }
@@ -99,6 +105,9 @@ func (o ProdOptions) normalized() (ProdOptions, error) {
 	}
 	if o.Generation < 0 {
 		return o, fmt.Errorf("generation %d must be >= 0", o.Generation)
+	}
+	if _, _, err := registryHost(o.RegistryBind, ""); err != nil {
+		return o, err
 	}
 	return o, nil
 }
@@ -216,13 +225,19 @@ func skillEnviron(skills []prodSkill) []string {
 }
 
 func prodServiceArgs(o ProdOptions, generation int) []string {
-	return []string{
+	args := []string{
 		"prod",
 		"--isotope", o.Isotope,
 		"--base-port", strconv.Itoa(o.BasePort),
 		"--child",
 		"--generation", strconv.Itoa(generation),
 	}
+	// A rotated child must serve who the parent served: carrying an explicit
+	// bind stops a handoff from quietly pulling the registry back to loopback.
+	if o.RegistryBind != "" {
+		args = append(args, "--registry-bind", o.RegistryBind)
+	}
+	return args
 }
 
 func prodStateDir(name string) (string, error) {
@@ -258,6 +273,13 @@ func buildProdPlan(opts ProdOptions, host string) (prodPlan, error) {
 	}
 	nodes := prodNodes(opts.BasePort)
 	primary, fallback := nodes[0], nodes[2]
+	// The registry record must name the address the registry actually listens
+	// on: with the default loopback bind, publishing the outbound IP would
+	// advertise an endpoint nothing answers on (lezz.go#59).
+	registryName, _, err := registryHost(opts.RegistryBind, host)
+	if err != nil {
+		return prodPlan{}, err
+	}
 	return prodPlan{
 		Options:  opts,
 		Nodes:    nodes,
@@ -269,7 +291,7 @@ func buildProdPlan(opts ProdOptions, host string) (prodPlan, error) {
 			AlarmB:  fmt.Sprintf("http://%s:%d", host, fallback.AlarmPort),
 			AdhdMCP: fmt.Sprintf("http://%s:%d/mcp", host, primary.ADHDPort),
 		},
-		Isotopes:           prodIsotopeRecords(opts.Isotope, primary, fallback, host),
+		Isotopes:           prodIsotopeRecords(opts.Isotope, primary, fallback, host, registryName),
 		FederationBasePort: opts.BasePort + prodFederationOffset,
 	}, nil
 }
@@ -290,6 +312,7 @@ func ParseProdArgs(args []string, output io.Writer) (ProdOptions, error) {
 	rotate := fs.Bool("rotate", false, "install the next generation as a launchd service and hand off")
 	child := fs.Bool("child", false, "internal: wait for the previous generation to release its ports")
 	generation := fs.Int("generation", 0, "internal: launchd service generation")
+	registryBind := fs.String("registry-bind", "", "host for the anchor /cluster registry (default: 127.0.0.1; 0.0.0.0 publishes it to the LAN)")
 
 	if err := fs.Parse(args); err != nil {
 		return ProdOptions{}, err
@@ -300,11 +323,12 @@ func ParseProdArgs(args []string, output io.Writer) (ProdOptions, error) {
 	// Validate here, not only in RunProd: an accepted argument set must be a
 	// usable one. The fuzz target asserts exactly this.
 	return ProdOptions{
-		Isotope:    *isotopeName,
-		BasePort:   *basePort,
-		Rotate:     *rotate,
-		Child:      *child,
-		Generation: *generation,
+		Isotope:      *isotopeName,
+		BasePort:     *basePort,
+		Rotate:       *rotate,
+		Child:        *child,
+		Generation:   *generation,
+		RegistryBind: *registryBind,
 	}.normalized()
 }
 
@@ -531,17 +555,25 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	}
 
 	// --- Anchor: the primary A node owns 19100 -----------------------------
-	// Only alarm_a and alarm_b are advertised. C has no name of its own.
+	// Only alarm_a and alarm_b are advertised. C has no name of its own. The
+	// registry binds loopback unless the operator published it: it is an
+	// unauthenticated directory, and prod's nodes are all local (lezz.go#59).
 	clusterInfo := plan.Cluster
-	discoverySrv, err := startDiscoveryServer(clusterInfo)
+	registry, err := resolveRegistryListener(plan.Options.RegistryBind)
+	if err != nil {
+		return err
+	}
+	discoverySrv, err := startDiscoveryServer(clusterInfo, registry)
 	if err != nil {
 		return fmt.Errorf("claim registry port %d: %w (another prod cluster or lezz demo owns it; use --rotate to hand off)", ProdRegistryPort, err)
 	}
 
 	var mdnsStop func()
-	if mdnsSrv, mdnsErr := registerMDNS(); mdnsErr != nil {
+	mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
+	switch {
+	case mdnsErr != nil:
 		fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
-	} else {
+	case mdnsSrv != nil:
 		mdnsStop = func() { mdnsSrv.Shutdown() }
 	}
 
@@ -619,7 +651,7 @@ isotope      %s  (%s)
 alarm_a      %s/status   <- %s (mirrored by %s, federation :%d)
 alarm_b      %s/status   <- fallback node (no separate name is advertised)
 adhd-a       %s
-registry     http://%s:%d/cluster
+registry     %s
 remote mgmt  enabled on all three alarms (remote_agent.managed_updates)
 generation   g%d
 state        %s
@@ -630,7 +662,7 @@ Ctrl+C to stop
 		clusterInfo.AlarmA, primary.Name, nodes[1].Name, plan.FederationBasePort,
 		clusterInfo.AlarmB,
 		clusterInfo.AdhdMCP,
-		host, ProdRegistryPort,
+		registry.registryURL(),
 		opts.Generation,
 		root,
 		os.Getpid(), opts.Generation+1)
@@ -710,13 +742,15 @@ func removeOlderProdServices(generation int) {
 }
 
 // prodIsotopeRecords is the public identity alone: cluster, alarm_a, alarm_b.
-// The mirror and the physical third node are never named here.
-func prodIsotopeRecords(name string, primary, fallback prodNode, host string) []isotope.Registration {
+// The mirror and the physical third node are never named here. registryName is
+// the host the anchor registry answers on, which is loopback unless the
+// operator published it.
+func prodIsotopeRecords(name string, primary, fallback prodNode, host, registryName string) []isotope.Registration {
 	return []isotope.Registration{
 		{
 			Name:     name,
 			Role:     "cluster",
-			Endpoint: fmt.Sprintf("http://%s:%d/cluster", host, ProdRegistryPort),
+			Endpoint: fmt.Sprintf("http://%s:%d/cluster", registryName, ProdRegistryPort),
 			Protocol: "http",
 		},
 		{

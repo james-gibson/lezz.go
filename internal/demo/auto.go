@@ -284,7 +284,15 @@ func printRegistry(clusters []ClusterInfo) {
 // unsupported subsystem. An embedded link here would start, warn, and never
 // join the mesh, so auto keeps spawning the binary until the facade exposes
 // federation. Run (demo) is hand-peered and does run its links in-process.
-func RunAuto(ctx context.Context) error {
+func RunAuto(ctx context.Context, registryBind string) error {
+	// Resolve the registry bind before anything starts, so an invalid
+	// --registry-bind fails here rather than after tools were installed and
+	// alarms spawned.
+	registry, err := resolveRegistryListener(registryBind)
+	if err != nil {
+		return err
+	}
+
 	// Auto-detect: a live registry already owns the fixed discovery port and
 	// the shared dashboard config, so reuse it rather than launching a second,
 	// competing cluster.
@@ -297,8 +305,8 @@ func RunAuto(ctx context.Context) error {
 
 	// Auto-install: the base cluster should not fail because a managed binary
 	// has not been installed yet.
-	if err := ensureTools(ctx, "adhd", "ocd-smoke-alarm"); err != nil {
-		return err
+	if toolErr := ensureTools(ctx, "adhd", "ocd-smoke-alarm"); toolErr != nil {
+		return toolErr
 	}
 
 	// --- Pre-allocate ports -------------------------------------------------
@@ -432,18 +440,21 @@ func RunAuto(ctx context.Context) error {
 	}
 
 	// --- Start discovery BEFORE adhd so `adhd --demo` can find the base -----
-	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
+	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo, registry)
 	switch discoveryErr {
 	case nil:
-		// We own the port — also register mDNS so LAN clients can find us.
+		// We own the port — advertise it over mDNS only if the bind is
+		// reachable from the LAN. A loopback registry has nothing to announce.
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer shutdownCancel()
 			_ = discoverySrv.Shutdown(shutdownCtx)
 		}()
-		if mdnsSrv, mdnsErr := registerMDNS(); mdnsErr != nil {
+		mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
+		switch {
+		case mdnsErr != nil:
 			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
-		} else {
+		case mdnsSrv != nil:
 			defer mdnsSrv.Shutdown()
 		}
 	default:
@@ -532,7 +543,7 @@ alarm-a      %s/status   (no targets — awaiting auto/remote config)
 alarm-b      %s/status   (no targets — awaiting auto/remote config)
 adhd MCP     %s  (config discovered from the registry)
 isotopes     %s
-registry     http://localhost:%d/cluster
+registry     %s
 federation   %d-%d        (instances auto-chain; first to bind %d is introducer)
 
 connect dashboard:  adhd --demo
@@ -546,7 +557,7 @@ chain on automatically as followers. Logs:
   %s
 
 Ctrl+C to stop
-`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, DiscoveryPort,
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, registry.registryURL(),
 		federationBasePort, federationMaxPort, federationBasePort,
 		alarmALogPath, alarmBLogPath, adhdLogPath)
 

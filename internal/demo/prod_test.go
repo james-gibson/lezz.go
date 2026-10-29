@@ -205,7 +205,7 @@ func TestProdAlarmConfigMirrorsOnlyTheAPair(t *testing.T) {
 
 func TestProdIsotopeRecordsAreLogicalOnly(t *testing.T) {
 	nodes := prodNodes(19200)
-	records := prodIsotopeRecords("lab-42", nodes[0], nodes[2], "host")
+	records := prodIsotopeRecords("lab-42", nodes[0], nodes[2], "host", "127.0.0.1")
 
 	byName := map[string]string{}
 	for _, r := range records {

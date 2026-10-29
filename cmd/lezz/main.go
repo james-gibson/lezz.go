@@ -318,10 +318,11 @@ func cmdDemoRestart(ctx context.Context, args []string) {
 
 // demoFlags holds the port pins shared by demo, demo start and demo restart.
 type demoFlags struct {
-	alarmA   int
-	alarmB   int
-	adhd     int
-	adhdBind string
+	alarmA       int
+	alarmB       int
+	adhd         int
+	adhdBind     string
+	registryBind string
 }
 
 func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
@@ -331,11 +332,18 @@ func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
 	fs.IntVar(&flags.alarmB, "alarm-b-port", 0, "pin the alarm-b health port (default: reuse the last run's port when it is free)")
 	fs.IntVar(&flags.adhd, "adhd-port", 0, "pin the adhd MCP port (default: reuse the last run's port when it is free)")
 	fs.StringVar(&flags.adhdBind, "adhd-bind", "", "host for the adhd MCP listener (default: all interfaces; 127.0.0.1 keeps the raw MCP surface off the LAN)")
+	fs.StringVar(&flags.registryBind, "registry-bind", "", "host for the /cluster discovery registry (default: 127.0.0.1; 0.0.0.0 publishes it to the LAN and advertises it over mDNS)")
 	return fs, flags
 }
 
 func (f *demoFlags) options() demo.Options {
-	return demo.Options{AlarmAPort: f.alarmA, AlarmBPort: f.alarmB, ADHDPort: f.adhd, ADHDBind: f.adhdBind}
+	return demo.Options{
+		AlarmAPort:   f.alarmA,
+		AlarmBPort:   f.alarmB,
+		ADHDPort:     f.adhd,
+		ADHDBind:     f.adhdBind,
+		RegistryBind: f.registryBind,
+	}
 }
 
 // noPositional rejects bare arguments after the flags.
@@ -364,17 +372,30 @@ func printDemoState(state demo.State) {
 // awaiting — targets/config arrive via the server's auto-refresh and remote
 // update paths instead of a hardcoded config.
 func cmdAuto(ctx context.Context) {
-	if helpOnly("auto", os.Args[2:]) {
+	fs, flags := newAutoFlagSet()
+	if !parseOrHelp(fs, os.Args[2:]) {
 		return
 	}
-	if err := noArguments("auto", os.Args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, "auto:", err)
-		os.Exit(2)
-	}
-	if err := demo.RunAuto(ctx); err != nil {
+	noPositional("auto", fs)
+	if err := demo.RunAuto(ctx, flags.registryBind); err != nil {
 		fmt.Fprintln(os.Stderr, "auto:", err)
 		os.Exit(1)
 	}
+}
+
+// autoFlags is the auto command's flag set. It is separate from cmdAuto so the
+// flags can be asserted without starting a cluster.
+type autoFlags struct {
+	registryBind string
+}
+
+// newAutoFlagSet builds `lezz auto`'s flags. auto starts the discovery registry
+// like demo does, so it carries the same opt-in (lezz.go#59).
+func newAutoFlagSet() (*flag.FlagSet, *autoFlags) {
+	fs := flag.NewFlagSet("auto", flag.ContinueOnError)
+	flags := &autoFlags{}
+	fs.StringVar(&flags.registryBind, "registry-bind", "", "host for the /cluster discovery registry (default: 127.0.0.1; 0.0.0.0 publishes it to the LAN and advertises it over mDNS)")
+	return fs, flags
 }
 
 // lezz prod [--isotope NAME] [--base-port N] [--rotate]

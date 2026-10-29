@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +16,20 @@ import (
 )
 
 // DiscoveryPort is the fixed well-known port for the /cluster registry.
-// Remote clients always reach it at <host>:19100/cluster.
+// Local clients always reach it at <host>:19100/cluster.
 const DiscoveryPort = 19100
+
+// RegistryBindDefault is the host the /cluster registry listens on unless the
+// operator opts into LAN discovery.
+//
+// The registry is an unauthenticated directory: GET /cluster names every
+// cluster's alarms and MCP endpoints, and POST /cluster accepts a record from
+// whoever can reach it. Binding it to every interface published that directory
+// to the LAN, which named the raw adhd MCP URLs the per-project gates exist to
+// keep off it, and let a third party enumerate or overwrite records
+// (lezz.go#59). Loopback makes the directory mean "this host"; exposing it to a
+// LAN is a decision the operator takes out loud, with --registry-bind.
+const RegistryBindDefault = "127.0.0.1"
 
 const mdnsService = "_lezz-demo._tcp"
 const mdnsDomain = "local."
@@ -75,16 +88,84 @@ func (r *registry) list() map[string]ClusterInfo {
 	return out
 }
 
-// startDiscoveryServer binds the fixed discovery port and serves the cluster
-// registry. Returns the HTTP server (caller must Shutdown) and any bind error.
+// registryListener is where the /cluster registry listens and who can reach it.
+// Addr is the bind address; Host is the host a URL or a state file should name;
+// LAN says the bind is reachable beyond loopback, which is the only case where
+// advertising it over mDNS is meaningful.
+type registryListener struct {
+	Addr string
+	Host string
+	LAN  bool
+}
+
+// registryHost maps a bind onto the host a URL should name, and reports whether
+// that bind is reachable from the LAN. outbound is the address to name for a
+// wildcard bind; it is passed in so the prod plan stays free of I/O.
+func registryHost(bind, outbound string) (host string, lan bool, err error) {
+	if bind == "" {
+		bind = RegistryBindDefault
+	}
+	ip := net.ParseIP(bind)
+	if ip == nil {
+		return "", false, fmt.Errorf("invalid --registry-bind %q: give an IP address (for example 127.0.0.1 to keep the registry local, or 0.0.0.0 to publish it to the LAN)", bind)
+	}
+	switch {
+	case ip.IsUnspecified():
+		return outbound, true, nil
+	case ip.IsLoopback():
+		return ip.String(), false, nil
+	default:
+		return ip.String(), true, nil
+	}
+}
+
+// resolveRegistryListener maps the --registry-bind host onto the registry
+// listener.
+//
+//   - empty: loopback. The registry is a read-and-write directory with no
+//     authentication, so the default is the bind that cannot be reached from
+//     the LAN (lezz.go#59). Publishing it is opt-in.
+//   - loopback: bind it and advertise nothing; local clients reach it exactly
+//     as before, through localhost:19100.
+//   - an unspecified address (0.0.0.0, ::): bind every interface and name the
+//     outbound IP — the deliberate LAN directory.
+//   - any other IP: bind it and name it; it is LAN-reachable, so it is
+//     advertised.
+//
+// An invalid value fails before any listener or child exists, so `lezz demo
+// start` reports the flag in the parent rather than in a detached child's log.
+func resolveRegistryListener(bind string) (registryListener, error) {
+	host, lan, err := registryHost(bind, outboundIP())
+	if err != nil {
+		return registryListener{}, err
+	}
+	if bind == "" {
+		bind = RegistryBindDefault
+	}
+	return registryListener{
+		Addr: net.JoinHostPort(bind, strconv.Itoa(DiscoveryPort)),
+		Host: host,
+		LAN:  lan,
+	}, nil
+}
+
+// registryURL is the /cluster endpoint this listener serves. The host is
+// joined with the port so an IPv6 bind is bracketed.
+func (l registryListener) registryURL() string {
+	return fmt.Sprintf("http://%s/cluster", net.JoinHostPort(l.Host, strconv.Itoa(DiscoveryPort)))
+}
+
+// startDiscoveryServer binds the resolved discovery listener and serves the
+// cluster registry. Returns the HTTP server (caller must Shutdown) and any bind
+// error.
 //
 // GET    /cluster          → map[name]ClusterInfo JSON
 // POST   /cluster          → register a ClusterInfo (body: ClusterInfo JSON)
 // DELETE /cluster/{name}   → deregister by name
-func startDiscoveryServer(seed ClusterInfo) (*http.Server, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", DiscoveryPort))
+func startDiscoveryServer(seed ClusterInfo, rl registryListener) (*http.Server, error) {
+	ln, err := net.Listen("tcp", rl.Addr)
 	if err != nil {
-		return nil, fmt.Errorf("bind discovery port %d: %w", DiscoveryPort, err)
+		return nil, fmt.Errorf("bind discovery registry on %s: %w", rl.Addr, err)
 	}
 
 	srv := &http.Server{
@@ -109,6 +190,15 @@ func newDiscoveryMux(reg *registry) *http.ServeMux {
 
 // clusterHandler serves the registry. The collection path carries GET and POST;
 // the subtree carries DELETE /cluster/{name}.
+//
+// Registration is deliberately anonymous, and that is a design constraint, not
+// an omission: the lab's agents must be able to register an alarm nobody has
+// told this host about, and the first agent to bind 19100 becomes the anchor
+// while later ones yield to it. Do not add a token without changing how a new
+// agent discovers and registers — it would turn "unknown alarms are accepted"
+// into "only pre-shared ones are". The guard against a third party enumerating
+// or poisoning this directory is therefore the bind, which resolves to loopback
+// unless the operator asks for the LAN (RegistryBindDefault, lezz.go#59).
 func clusterHandler(reg *registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := clusterNameFromPath(r.URL.Path)
@@ -199,6 +289,18 @@ func joinDiscoveryServer(info ClusterInfo) (deregFn func(), err error) {
 // Clients browse for _lezz-demo._tcp then GET /cluster for the full list.
 func registerMDNS() (*zeroconf.Server, error) {
 	return zeroconf.Register("lezz-demo", mdnsService, mdnsDomain, DiscoveryPort, []string{"v=1"}, nil)
+}
+
+// registerRegistryMDNS advertises the registry over DNS-SD, but only when the
+// bind is reachable from the LAN. A loopback registry advertised over mDNS would
+// name a service no peer can dial — and announce a directory that is not there
+// to every browser that lists it. It returns (nil, nil) when no advertisement is
+// published, so a caller never has to Shutdown a nil server.
+func registerRegistryMDNS(rl registryListener) (*zeroconf.Server, error) {
+	if !rl.LAN {
+		return nil, nil
+	}
+	return registerMDNS()
 }
 
 // outboundIP returns the machine's preferred outbound IP address.

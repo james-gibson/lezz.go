@@ -183,8 +183,8 @@ of the same service is expected — the install reloads it.
 
 - Two smoke-alarm links running **in-process** (`github.com/james-gibson/smoke-alarm/pkg/smokealarm`), each watching the other — no generated alarm YAML and no `ocd-smoke-alarm` subprocess
 - One `adhd` instance in headless mode, registered as an isotope with the primary smoke-alarm
-- A fixed-port discovery registry at `:19100/cluster`
-- mDNS advertisement of `_lezz-demo._tcp`
+- A fixed-port discovery registry at `127.0.0.1:19100/cluster` — **loopback only** unless you ask for the LAN (see [The discovery registry](#the-discovery-registry))
+- mDNS advertisement of `_lezz-demo._tcp`, only when the registry is published beyond loopback
 
 The links honour `health.self_check`, `tuner.advertise`, `alerts.sinks.log` and
 per-link known-state baselines (`state-a` / `state-b`), and they shut down when
@@ -251,6 +251,35 @@ advertise-guard override (`--force`) is passed only for a bind that reaches
 beyond loopback, since only that bind needs it. The two alarms keep their
 all-interfaces bind either way: their `/status` is read-only.
 
+### The discovery registry
+
+The registry is the directory behind `19100/cluster`: `GET` lists every cluster
+and its endpoints, `POST` registers one, `DELETE` removes one. It answers
+**without authentication on purpose** — an alarm nobody has told this host about
+must be able to register, and the first agent to bind `19100` becomes the anchor
+while later ones yield to it and join.
+
+That is also why it does not listen on the LAN unless asked. A wildcard registry
+hands any caller on the network the full endpoint list — including the raw adhd
+MCP URL a gate is supposed to be in front of — and accepts a record from anyone
+who can reach it. So the bind defaults to loopback:
+
+```sh
+lezz demo start                        # registry on 127.0.0.1:19100, no mDNS
+lezz demo start --registry-bind 0.0.0.0 # publish it: LAN clients can enumerate
+lezz demo start --registry-bind 0.0.0.0 --adhd-bind 127.0.0.1  # published, adhd still gated
+```
+
+A loopback registry is advertised over mDNS only when the bind is reachable
+beyond loopback; announcing a directory no peer can dial would be noise. The
+flag takes an IP address, like `--adhd-bind`, and an invalid one fails the start
+before any child exists. `lezz auto` and `lezz prod` take the same flag.
+
+Remote enumeration is therefore opt-in. Publish the registry only on a network
+where you want `lezz see` and `adhd --demo` from other hosts to find this
+machine, and remember that a published registry is a write surface as well as a
+read one.
+
 Connect the dashboard to a running demo cluster:
 
 ```sh
@@ -286,10 +315,12 @@ to be populated at runtime instead of hardcoding the config at launch:
   apart from `demo`, which wires instances by hand)
 - One `adhd` instance in headless mode started with `--demo`, so it builds its
   `smoke_alarm` endpoints from the discovery registry rather than a config file
-- A fixed-port discovery registry at `:19100/cluster` and mDNS advertisement
+- A fixed-port discovery registry at `127.0.0.1:19100/cluster`, loopback only
+  unless `--registry-bind` publishes it (see [The discovery registry](#the-discovery-registry))
 
 ```sh
 lezz auto
+lezz auto --registry-bind 0.0.0.0     # publish the registry to the LAN
 # connect a dashboard:
 adhd --demo
 ```
@@ -320,7 +351,7 @@ not told that `alarm_a` is mirrored, or that `alarm_b` is a third node.
 | `alarm_a` | `alarm-a-a` (primary, owns the registry) | `:19200`, adhd `:19210` |
 | `alarm_a` | `alarm-a-b` (mirror, same federation cluster) | `:19201`, adhd `:19211` |
 | `alarm_b` | `alarm-c` (never named "c" to a client) | `:19202`, adhd `:19212` |
-| registry | anchor on the primary A node | `:19100/cluster` |
+| registry | anchor on the primary A node | `:19100/cluster`, loopback unless published |
 
 Ports are fixed rather than random, so a rotated generation is reachable at the
 same endpoints as the one it replaces.
@@ -334,6 +365,9 @@ lezz prod --isotope lab-42
   identity a rotated child inherits, so peers do not see a trust reset.
 - `--base-port N` moves the node block (default `19200`); the anchor port does
   not move.
+- `--registry-bind IP` publishes the anchor registry beyond loopback (default
+  `127.0.0.1`). The bind travels with a rotated child, so a handoff does not
+  change who can reach the registry.
 - The A pair federates (`cluster_id`, shared slot range): the first to bind
   claims the introducer slot, the other follows and reports to it. C does not
   federate; it is the fallback role.

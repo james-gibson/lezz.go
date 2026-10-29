@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/james-gibson/lezz.go/internal/demo"
 )
 
 func TestGitHubClientID(t *testing.T) {
@@ -223,6 +225,27 @@ func TestNoArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "lezz demo --help") {
 		t.Fatalf("error should point at --help: %v", err)
+	}
+}
+
+// TestRegistryBindIsOnEveryRegistryStarter guards the user-facing spelling for
+// lezz.go#59. Three commands start the /cluster registry, and each one must
+// offer the same opt-in: a command with no flag either leaves the registry on
+// the LAN or has no way to publish it.
+func TestRegistryBindIsOnEveryRegistryStarter(t *testing.T) {
+	if fs, _ := newDemoFlagSet("demo"); fs.Lookup("registry-bind") == nil {
+		t.Error("demo has no --registry-bind flag")
+	}
+	if fs, _ := newAutoFlagSet(); fs.Lookup("registry-bind") == nil {
+		t.Error("auto has no --registry-bind flag")
+	}
+	// prod parses through demo.ParseProdArgs.
+	if _, err := demo.ParseProdArgs([]string{"--registry-bind", "0.0.0.0"}, nil); err != nil {
+		t.Errorf("prod rejects --registry-bind: %v", err)
+	}
+	// The flag is an address, not a name: the same rejection demo applies.
+	if _, err := demo.ParseProdArgs([]string{"--registry-bind", "localhost"}, nil); err == nil {
+		t.Error("prod accepted a hostname registry bind")
 	}
 }
 
