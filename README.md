@@ -482,6 +482,21 @@ Nothing that binds a port, spawns a process, writes a plist or calls
 start a cluster.
 
 ---
+## `lezz motd`
+
+The greeting a workspace user — or their agent — gets. It is the note from the
+lab's burned test vector (`isotope/testdata/burned`, key `zaphod-beeblebrox`), so
+it can be checked rather than believed:
+
+```
+$ lezz motd
+Don't Panic. 42 is a coordinate, not a credential; trust is what you pinned.
+This greeting is a signed test vector (isotope/testdata/burned, key: zaphod-beeblebrox), so anyone can check it and nobody has to trust it. Verify it; don't believe it.
+```
+
+`lezz mcp` returns the same text as `initialize.instructions`, so the agent path
+and the human path say one thing.
+
 ## lezz sea
 
 Install and supervise the [lezz.sea](https://github.com/james-gibson/lezz.sea)

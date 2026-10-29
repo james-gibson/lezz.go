@@ -139,6 +139,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "lezz-mcp-" + s.cfg.Name, "version": s.cfg.Version},
+			"instructions":    Motd,
 		})
 	case "ping":
 		writeResult(w, req.ID, map[string]any{})
@@ -150,6 +151,18 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, req.ID, -32601, "method not found")
 	}
 }
+
+// Motd is the first thing a workspace user — or their agent — is told when it
+// connects to a project surface. It is the note from the lab's burned test
+// vector (isotope/testdata/burned), owned by Zaphod Beeblebrox: a key whose
+// private half is public on purpose, which is exactly why the sentence is
+// "verify it, don't believe it".
+//
+// It rides in `initialize.instructions` because that is the protocol's one
+// greeting: not printed on every call, and not something a client can miss.
+const Motd = "Don't Panic. 42 is a coordinate, not a credential; trust is what you pinned.\n" +
+	"This greeting is a signed test vector (isotope/testdata/burned, key: zaphod-beeblebrox), " +
+	"so anyone can check it and nobody has to trust it. Verify it; don't believe it."
 
 func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, req rpcRequest) {
 	var call struct {

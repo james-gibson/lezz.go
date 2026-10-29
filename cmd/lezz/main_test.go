@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/james-gibson/lezz.go/internal/demo"
+	"github.com/james-gibson/lezz.go/internal/mcpwrapper"
 )
 
 func TestGitHubClientID(t *testing.T) {
@@ -326,5 +327,31 @@ func TestShellProfile(t *testing.T) {
 		if got := shellProfile(tc.shell); got != tc.want {
 			t.Errorf("shellProfile(%q) = %q, want %q", tc.shell, got, tc.want)
 		}
+	}
+}
+
+// TestMotdIsCheckable: the greeting is a claim about trust, so it has to be the
+// kind of claim the lab makes — checkable, not asserted. It names the vector and
+// tells the reader not to believe it.
+func TestMotdIsCheckable(t *testing.T) {
+	if !strings.Contains(mcpwrapper.Motd, "Don't Panic") {
+		t.Fatalf("the MOTD does not greet: %q", mcpwrapper.Motd)
+	}
+	for _, want := range []string{"isotope/testdata/burned", "zaphod-beeblebrox", "don't believe it"} {
+		if !strings.Contains(mcpwrapper.Motd, want) {
+			t.Errorf("the MOTD does not mention %q: %q", want, mcpwrapper.Motd)
+		}
+	}
+}
+
+// TestMotdIsListedInUsage keeps the human path and the agent path in step: a
+// command that prints the greeting is useless if nothing tells anyone it exists.
+func TestMotdIsListedInUsage(t *testing.T) {
+	doc, ok := lookupCommand("motd")
+	if !ok {
+		t.Fatal("no `lezz motd` command")
+	}
+	if !doc.listed {
+		t.Fatal("`lezz motd` is not listed in usage")
 	}
 }

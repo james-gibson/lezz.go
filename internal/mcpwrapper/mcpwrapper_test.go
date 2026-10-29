@@ -83,6 +83,11 @@ func TestInitializeAndToolsList(t *testing.T) {
 	if !strings.Contains(string(init["result"]), "lezz-mcp-pr") {
 		t.Fatalf("initialize: %s", init["result"])
 	}
+	// The greeting is the lab's MOTD: a workspace user's first message should say
+	// what trust means here, and point at something they can check.
+	if !strings.Contains(string(init["result"]), "Don't Panic") {
+		t.Fatalf("initialize carries no MOTD: %s", init["result"])
+	}
 	list := post(t, w.URL(), `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	for _, name := range []string{"pr.get", "pr.status"} {
 		if !strings.Contains(string(list["result"]), name) {
