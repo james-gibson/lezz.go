@@ -334,12 +334,13 @@ func TestShellProfile(t *testing.T) {
 // kind of claim the lab makes — checkable, not asserted. It names the vector and
 // tells the reader not to believe it.
 func TestMotdIsCheckable(t *testing.T) {
-	if !strings.Contains(mcpwrapper.Motd, "Don't Panic") {
-		t.Fatalf("the MOTD does not greet: %q", mcpwrapper.Motd)
+	text := mcpwrapper.Motd
+	if !strings.Contains(text, "Don't Panic") {
+		t.Fatalf("the MOTD does not greet: %q", text)
 	}
 	for _, want := range []string{"isotope/testdata/burned", "zaphod-beeblebrox", "don't believe it"} {
-		if !strings.Contains(mcpwrapper.Motd, want) {
-			t.Errorf("the MOTD does not mention %q: %q", want, mcpwrapper.Motd)
+		if !strings.Contains(text, want) {
+			t.Errorf("the MOTD does not mention %q: %q", want, text)
 		}
 	}
 }
