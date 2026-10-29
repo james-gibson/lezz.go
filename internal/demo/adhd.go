@@ -232,17 +232,20 @@ func waitServiceOpen(ctx context.Context, addr string, exited <-chan error) erro
 
 // readinessError names the service whose readiness failed and attaches the log
 // the failure was written to.
-func readinessError(service string, err error, logPath string) error {
-	return fmt.Errorf("%s readiness: %w; %s", service, err, logEvidence(logPath))
+// readinessError renders a failed start with the child's own output. evidenceDir
+// is where the whole log is preserved; empty means ~/.lezz/logs, which is what a
+// cluster that has not moved its state uses.
+func readinessError(service string, err error, logPath, evidenceDir string) error {
+	return fmt.Errorf("%s readiness: %w; %s", service, err, logEvidence(logPath, evidenceDir))
 }
 
 // logEvidence keeps the child's log out of the demo's temp root, which Run
 // removes on the way out, and renders the last lines plus where the whole log
 // now lives. The cause of a failed start therefore outlives the process that
 // produced it (#28).
-func logEvidence(logPath string) string {
+func logEvidence(logPath, evidenceDir string) string {
 	var b strings.Builder
-	if kept := preserveLog(logPath); kept != "" {
+	if kept := preserveLog(logPath, evidenceDir); kept != "" {
 		fmt.Fprintf(&b, "full log: %s\n", kept)
 	}
 	if tail := tailFile(logPath, 20); tail != "" {
@@ -254,19 +257,24 @@ func logEvidence(logPath string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// preserveLog copies a child's log to ~/.lezz/logs so the evidence survives the
-// demo's temp root. It returns the copy's path, or "" when there is nothing to
-// keep.
-func preserveLog(logPath string) string {
+// preserveLog copies a child's log into the cluster's evidence dir so the
+// evidence survives the demo's temp root. It returns the copy's path, or "" when
+// there is nothing to keep. An empty evidenceDir means ~/.lezz/logs; a cluster
+// with its own state dir keeps its evidence there, so two clusters cannot
+// overwrite each other's failure.
+func preserveLog(logPath, evidenceDir string) string {
 	data, err := os.ReadFile(logPath) //nolint:gosec // logPath is a file in the demo's temp root
 	if err != nil || len(data) == 0 {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	dir := filepath.Join(evidenceDir, "logs")
+	if evidenceDir == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return ""
+		}
+		dir = filepath.Join(home, ".lezz", "logs")
 	}
-	dir := filepath.Join(home, ".lezz", "logs")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return ""
 	}

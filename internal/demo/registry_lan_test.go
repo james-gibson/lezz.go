@@ -112,6 +112,10 @@ func startRegistryDemo(t *testing.T, opts Options) State {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stateDir, err := ResolveStateDir(opts.StateDir)
+	if err != nil {
+		t.Fatalf("resolve state dir: %v", err)
+	}
 	binDir := filepath.Join(home, ".lezz", "bin")
 	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		t.Fatalf("create bin dir: %v", err)
@@ -137,7 +141,7 @@ func startRegistryDemo(t *testing.T, opts Options) State {
 		}
 	})
 
-	return waitForDemoState(t, done, func() error { return runErr })
+	return waitForDemoState(t, done, func() error { return runErr }, stateDir)
 }
 
 // getClustersMaybe is getClusters without the failure: an unreachable or

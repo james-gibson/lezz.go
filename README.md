@@ -215,14 +215,15 @@ lezz demo stop                      # SIGTERM, waits for the process to exit
 lezz demo restart                   # stop + start, same ports when free
 ```
 
-`start` writes `~/.lezz/demo-state.json` (pid, endpoints, log directory) and sends
-the child's output to `~/.lezz/logs/demo.log`. `status` and `stop` read that file,
-so they also reach a foreground `lezz demo` started in another terminal. The state
-file is removed when the cluster exits; a state file whose process is gone is
-cleaned up on the next `status`.
+`start` writes `demo-state.json` (pid, endpoints, log directory) into the cluster's
+state dir — `~/.lezz` unless you move it — and sends the child's output to
+`<state-dir>/logs/demo.log`. `status` and `stop` read that file, so they also
+reach a foreground `lezz demo` started in another terminal. The state file is
+removed when the cluster exits; a state file whose process is gone is cleaned up
+on the next `status`.
 
-Ports are stable across restarts: the last run's ports are saved in
-`~/.lezz/demo-ports.json` and reused when they are still free. Pin them when the
+Ports are stable across restarts: the last run's ports are saved next to the state
+file (`demo-ports.json`) and reused when they are still free. Pin them when the
 endpoints must be known up front:
 
 ```sh
@@ -231,6 +232,32 @@ lezz demo start --alarm-a-port 52100 --alarm-b-port 52101 --adhd-port 52102
 
 A pinned port that is already in use fails the start instead of quietly moving the
 endpoint.
+
+### Several clusters under one HOME
+
+A demo keeps its state, ports, generated adhd config and logs in `~/.lezz`. That
+is fine for one cluster, but a second one needs its own files — and giving it a
+fake `HOME` to get them also hides `~/.config/gh`, your git config and every
+other credential the cluster's children may need. So the state moves instead:
+
+```sh
+lezz demo start --state-dir ~/.lezz/clusters/kb
+lezz demo start --state-dir ~/.lezz/clusters/tuner
+lezz demo status --state-dir ~/.lezz/clusters/kb
+lezz demo stop   --state-dir ~/.lezz/clusters/kb   # the other cluster keeps running
+```
+
+`LEZZ_DEMO_STATE_DIR` is the same thing for a shell that would rather export it
+once; the flag wins when both are set, and `~/.lezz` is the default. The
+directory holds `demo-state.json`, `demo-ports.json`, `demo-adhd.yaml` and
+`logs/demo.log`, so a cluster is entirely described by where you pointed it. Each
+cluster allocates its own ports, and the discovery registry still has one owner:
+the second cluster finds the first on `127.0.0.1:19100` and registers with it
+rather than starting a competing directory.
+
+The managed binaries still come from `~/.lezz/bin` — only cluster state moves.
+`lezz see`, `adhd --demo` and `adhd --config <state-dir>/demo-adhd.yaml` work
+unchanged.
 
 ### Loopback-only clusters
 
@@ -285,7 +312,7 @@ Connect the dashboard to a running demo cluster:
 ```sh
 adhd --demo
 # or, using the stable config written by lezz demo:
-adhd --config ~/.lezz/demo-adhd.yaml
+adhd --config ~/.lezz/demo-adhd.yaml   # or <state-dir>/demo-adhd.yaml
 ```
 
 Inspect cluster state:

@@ -36,9 +36,13 @@ func TestDemoLoopbackBindKeepsADHDOffTheLAN(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stateDir, err := ResolveStateDir("")
+	if err != nil {
+		t.Fatalf("resolve state dir: %v", err)
+	}
 	binDir := filepath.Join(home, ".lezz", "bin")
-	if err := os.MkdirAll(binDir, 0o750); err != nil {
-		t.Fatalf("create bin dir: %v", err)
+	if mkErr := os.MkdirAll(binDir, 0o750); mkErr != nil {
+		t.Fatalf("create bin dir: %v", mkErr)
 	}
 	buildStandInADHD(t, filepath.Join(binDir, "adhd"))
 
@@ -61,7 +65,7 @@ func TestDemoLoopbackBindKeepsADHDOffTheLAN(t *testing.T) {
 		}
 	})
 
-	state := waitForDemoState(t, done, func() error { return runErr })
+	state := waitForDemoState(t, done, func() error { return runErr }, stateDir)
 	if state.Ports.ADHD == 0 {
 		t.Fatalf("state has no adhd port: %+v", state.Ports)
 	}
@@ -99,9 +103,10 @@ func TestDemoLoopbackBindKeepsADHDOffTheLAN(t *testing.T) {
 	}
 }
 
-// waitForDemoState waits for the cluster to publish its endpoints, failing if it
-// exits first so a startup error is reported rather than a 60 s timeout.
-func waitForDemoState(t *testing.T, done <-chan struct{}, runErr func() error) State {
+// waitForDemoState waits for the cluster to publish its endpoints in stateDir,
+// failing if it exits first so a startup error is reported rather than a 60 s
+// timeout.
+func waitForDemoState(t *testing.T, done <-chan struct{}, runErr func() error, stateDir string) State {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
@@ -110,7 +115,7 @@ func waitForDemoState(t *testing.T, done <-chan struct{}, runErr func() error) S
 			t.Fatalf("demo exited before publishing state: %v", runErr())
 		default:
 		}
-		if state, ok := readState(); ok {
+		if state, ok := readState(stateDir); ok {
 			return state
 		}
 		if time.Now().After(deadline) {

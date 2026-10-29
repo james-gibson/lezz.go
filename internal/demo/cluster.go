@@ -70,17 +70,10 @@ func clusterName() string {
 // 0.0.0.0 makes them reachable from the LAN, not just localhost.
 const healthListenAddr = "0.0.0.0"
 
-// stableDemoConfigPath returns ~/.lezz/demo-adhd.yaml, creating the parent dir.
-func stableDemoConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	dir := home + "/.lezz"
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("create .lezz dir: %w", err)
-	}
-	return dir + "/demo-adhd.yaml", nil
+// stableDemoConfigPath is the dashboard-friendly copy of the cluster's adhd
+// config, inside the cluster's own state dir (demo-adhd.yaml).
+func stableDemoConfigPath(dir string) string {
+	return filepath.Join(dir, "demo-adhd.yaml")
 }
 
 // copyFile copies src to dst, creating or truncating dst.
@@ -206,6 +199,30 @@ func killProcess(cmd *exec.Cmd) {
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 }
+
+// stopChild asks a child to exit and waits until it has. killProcess only
+// signals: a demo that exits first leaves its adhd behind in the new session it
+// was started in, still holding its MCP port and its mDNS advertisement, and
+// still registered with the discovery directory (lezz.go#60). A child that
+// ignores SIGTERM is killed after the grace period.
+func stopChild(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(childStopGrace)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = cmd.Process.Kill()
+}
+
+// childStopGrace bounds how long a shutdown waits for one child.
+const childStopGrace = 3 * time.Second
 
 // queryIsotopeTrust polls the isotope list from the smoke-alarm health server
 // until at least one entry appears or the deadline is reached. The poll exists
@@ -370,21 +387,41 @@ func notifyExistingADHD(newCluster ClusterInfo) {
 // Run launches a self-contained demo cluster and blocks until Ctrl+C or the
 // context is canceled.
 func Run(ctx context.Context, opts Options) error {
-	// One cluster per host: a second run would fight for the discovery port and
-	// leave two state files pointing at different endpoints.
-	if running, ok := RunningState(); ok {
-		return fmt.Errorf("a demo cluster is already running (pid %d, alarm-a %s); see lezz demo status or lezz demo stop", running.PID, running.Cluster.AlarmA)
+	// Catch a stop before anything else. `lezz demo start` returns as soon as the
+	// state file exists, which is before this process has printed its summary, so
+	// a stop can arrive mid-startup. Without the handler installed this early the
+	// signal's default action kills the process before its defers run — leaving
+	// adhd alive in its own session and the cluster's registry entry behind.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	// Where this cluster keeps its state. Resolved first: the dir names the
+	// single-cluster record, the port ledger and the generated adhd config, and
+	// a cluster that is one of several owns its own (lezz.go#60).
+	stateDir, err := ResolveStateDir(opts.StateDir)
+	if err != nil {
+		return err
+	}
+
+	// One cluster per state dir: a second run in the same dir would fight for
+	// the cluster's own files and leave two records pointing at different
+	// endpoints. A different dir is a different cluster — it allocates its own
+	// ports and yields the discovery port to whoever owns it.
+	if running, ok := RunningState(stateDir); ok {
+		return fmt.Errorf("a demo cluster is already running in %s (pid %d, alarm-a %s); see lezz demo status --state-dir %s or lezz demo stop --state-dir %s, or start this one with --state-dir <other>", stateDir, running.PID, running.Cluster.AlarmA, stateDir, stateDir)
 	}
 
 	// --- Resolve ports ------------------------------------------------------
 	// Pinned ports win; otherwise the last run's ports are reused when free so a
-	// restart keeps the endpoints saved in MCP configs.
-	ports, err := resolvePorts(opts)
+	// restart keeps the endpoints saved in MCP configs. The ledger is per state
+	// dir, so the first cluster's ports are not reused by the second.
+	ports, err := resolvePorts(opts, stateDir)
 	if err != nil {
 		return err
 	}
 	portA, portB, adhdPort := ports.AlarmA, ports.AlarmB, ports.ADHD
-	if saveErr := savePorts(ports); saveErr != nil {
+	if saveErr := savePorts(ports, stateDir); saveErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not record demo ports: %v\n", saveErr)
 	}
 
@@ -468,11 +505,11 @@ func Run(ctx context.Context, opts Options) error {
 	// --- Poll alarm readiness -----------------------------------------------
 	fmt.Println("waiting for alarm-a to become ready...")
 	if readyErr := waitReady(ctx, linkA.healthURL()); readyErr != nil {
-		return readinessError("alarm-a", readyErr, alarmALogPath)
+		return readinessError("alarm-a", readyErr, alarmALogPath, stateDir)
 	}
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, linkB.healthURL()); readyErr != nil {
-		return readinessError("alarm-b", readyErr, alarmBLogPath)
+		return readinessError("alarm-b", readyErr, alarmBLogPath, stateDir)
 	}
 
 	adhdConfigPath, err := writeTempConfig(tmpRoot, "adhd", adhdConfigTmpl, adhdConfig{
@@ -485,10 +522,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	// Also write to a stable path so the dashboard can always find the cluster.
-	stableConfigPath, err := stableDemoConfigPath()
-	if err != nil {
-		return fmt.Errorf("resolve stable config path: %w", err)
-	}
+	// It lives in the cluster's state dir, so two clusters under one HOME do not
+	// overwrite each other's dashboard config.
+	stableConfigPath := stableDemoConfigPath(stateDir)
 	copyErr := copyFile(adhdConfigPath, stableConfigPath)
 	if copyErr != nil {
 		return fmt.Errorf("write stable adhd config: %w", copyErr)
@@ -508,7 +544,10 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
-	defer killProcess(cmdADHD)
+	// Stop adhd and wait for it to go: signaling alone lets this process exit
+	// first, and adhd keeps its port, its mDNS advertisement and its isotope
+	// registration after the cluster it belonged to is gone.
+	defer stopChild(cmdADHD)
 	adhdExited := watchExit(cmdADHD)
 
 	// --- Poll adhd MCP readiness --------------------------------------------
@@ -516,7 +555,7 @@ func Run(ctx context.Context, opts Options) error {
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
 	if readyErr := waitServiceOpen(ctx, net.JoinHostPort(adhdListen.Host, strconv.Itoa(adhdPort)), adhdExited); readyErr != nil {
-		return readinessError("adhd MCP", readyErr, adhdLogPath)
+		return readinessError("adhd MCP", readyErr, adhdLogPath, stateDir)
 	}
 
 	// --- Start discovery (fixed port + mDNS) --------------------------------
@@ -566,7 +605,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	// --- Publish the running cluster ----------------------------------------
-	// From here on `lezz demo status|stop` can find this process. The file is
+	// From here on `lezz demo status|stop` can find this process. The record is
 	// removed on the way out, unless another cluster has replaced it.
 	state := State{
 		PID:          os.Getpid(),
@@ -576,11 +615,12 @@ func Run(ctx context.Context, opts Options) error {
 		Discovery:    registry.registryURL(),
 		StableConfig: stableConfigPath,
 		LogDir:       tmpRoot,
+		StateDir:     stateDir,
 	}
-	if err := writeState(state); err != nil {
+	if err := writeState(state, stateDir); err != nil {
 		return fmt.Errorf("write demo state: %w", err)
 	}
-	defer removeState(state.PID)
+	defer removeState(state.PID, stateDir)
 
 	// --- Query isotope trust level from alarm-a -----------------------------
 	trustSummary := queryIsotopeTrust(ctx, smokeAlarmURL)
@@ -594,6 +634,7 @@ alarm-b      %s/status
 adhd MCP     %s
 isotopes     %s
 discovery    %s
+state        %s
 
 connect dashboard:  adhd --config %s
 
@@ -602,14 +643,10 @@ logs         %s
              %s
 
 Ctrl+C to stop
-`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, registry.registryURL(), stableConfigPath,
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, registry.registryURL(), stateDir, stableConfigPath,
 		alarmALogPath, alarmBLogPath, adhdLogPath)
 
 	// --- Wait for shutdown signal -------------------------------------------
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
 	select {
 	case <-sigCh:
 		fmt.Println("\nshutting down demo cluster...")

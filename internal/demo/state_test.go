@@ -24,10 +24,22 @@ func isolateHome(t *testing.T) string {
 	return home
 }
 
-func TestResolvePorts_ReusesSavedPorts(t *testing.T) {
+// testStateDir is the default state dir under an isolated HOME: the directory a
+// cluster started with no --state-dir would use.
+func testStateDir(t *testing.T) string {
+	t.Helper()
 	isolateHome(t)
+	dir, err := ResolveStateDir("")
+	if err != nil {
+		t.Fatalf("resolve default state dir: %v", err)
+	}
+	return dir
+}
 
-	first, err := resolvePorts(Options{})
+func TestResolvePorts_ReusesSavedPorts(t *testing.T) {
+	dir := testStateDir(t)
+
+	first, err := resolvePorts(Options{}, dir)
 	if err != nil {
 		t.Fatalf("resolvePorts: %v", err)
 	}
@@ -37,11 +49,11 @@ func TestResolvePorts_ReusesSavedPorts(t *testing.T) {
 	if first.AlarmA == first.AlarmB || first.AlarmA == first.ADHD || first.AlarmB == first.ADHD {
 		t.Fatalf("resolvePorts returned duplicate ports: %+v", first)
 	}
-	if saveErr := savePorts(first); saveErr != nil {
+	if saveErr := savePorts(first, dir); saveErr != nil {
 		t.Fatalf("savePorts: %v", saveErr)
 	}
 
-	second, err := resolvePorts(Options{})
+	second, err := resolvePorts(Options{}, dir)
 	if err != nil {
 		t.Fatalf("resolvePorts (second): %v", err)
 	}
@@ -51,13 +63,13 @@ func TestResolvePorts_ReusesSavedPorts(t *testing.T) {
 }
 
 func TestResolvePorts_PinnedPortWins(t *testing.T) {
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	pinned, err := freePort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ports, err := resolvePorts(Options{AlarmAPort: pinned})
+	ports, err := resolvePorts(Options{AlarmAPort: pinned}, dir)
 	if err != nil {
 		t.Fatalf("resolvePorts: %v", err)
 	}
@@ -67,7 +79,7 @@ func TestResolvePorts_PinnedPortWins(t *testing.T) {
 }
 
 func TestResolvePorts_PinnedPortInUseFailsClosed(t *testing.T) {
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -76,7 +88,7 @@ func TestResolvePorts_PinnedPortInUseFailsClosed(t *testing.T) {
 	defer func() { _ = l.Close() }()
 	taken := l.Addr().(*net.TCPAddr).Port
 
-	_, err = resolvePorts(Options{AlarmAPort: taken})
+	_, err = resolvePorts(Options{AlarmAPort: taken}, dir)
 	if err == nil {
 		t.Fatalf("resolvePorts accepted a pinned port that is in use (%d)", taken)
 	}
@@ -86,13 +98,13 @@ func TestResolvePorts_PinnedPortInUseFailsClosed(t *testing.T) {
 }
 
 func TestResolvePorts_DuplicatePinsFail(t *testing.T) {
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	port, err := freePort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolvePorts(Options{AlarmAPort: port, AlarmBPort: port})
+	_, err = resolvePorts(Options{AlarmAPort: port, AlarmBPort: port}, dir)
 	if err == nil {
 		t.Fatalf("resolvePorts accepted the same pin for alarm-a and alarm-b (%d)", port)
 	}
@@ -124,7 +136,7 @@ func TestValidatePins(t *testing.T) {
 }
 
 func TestStateRoundTrip(t *testing.T) {
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	state := State{
 		PID:       os.Getpid(),
@@ -133,11 +145,11 @@ func TestStateRoundTrip(t *testing.T) {
 		Discovery: "http://127.0.0.1:19100/cluster",
 		LogDir:    "/tmp/lezz-demo-test",
 	}
-	if err := writeState(state); err != nil {
+	if err := writeState(state, dir); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
 
-	got, ok := RunningState() // our own pid is alive
+	got, ok := RunningState(dir) // our own pid is alive
 	if !ok {
 		t.Fatal("RunningState did not report the state we just wrote")
 	}
@@ -145,27 +157,23 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Errorf("read back %+v, want %+v", got, state)
 	}
 
-	removeState(state.PID)
-	if _, ok := readState(); ok {
+	removeState(state.PID, dir)
+	if _, ok := readState(dir); ok {
 		t.Error("removeState left the state file behind")
 	}
 }
 
 func TestRunningState_RemovesStaleState(t *testing.T) {
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	// A pid that cannot be alive on a normal host.
-	if err := writeState(State{PID: 1 << 22, Cluster: ClusterInfo{Name: "stale"}}); err != nil {
+	if err := writeState(State{PID: 1 << 22, Cluster: ClusterInfo{Name: "stale"}}, dir); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
-	if _, ok := RunningState(); ok {
+	if _, ok := RunningState(dir); ok {
 		t.Fatal("RunningState reported a stale state as running")
 	}
-	path, err := stateFile()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(statePath(dir)); !os.IsNotExist(statErr) {
 		t.Errorf("stale state file was not removed: %v", statErr)
 	}
 }
@@ -174,14 +182,14 @@ func TestStop_RefusesProcessThatIsNotDemo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no command-line probe on Windows")
 	}
-	isolateHome(t)
+	dir := testStateDir(t)
 
 	// Our own pid is alive but the test binary's command line does not contain
 	// the word "demo", so Stop must refuse rather than signal it.
-	if err := writeState(State{PID: os.Getpid(), Cluster: ClusterInfo{Name: "foreign"}}); err != nil {
+	if err := writeState(State{PID: os.Getpid(), Cluster: ClusterInfo{Name: "foreign"}}, dir); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
-	err := Stop(100_000_000) // 100ms in ns, never reached
+	err := Stop(dir, 100_000_000) // 100ms in ns, never reached
 	if err == nil || !strings.Contains(err.Error(), "does not look like") {
 		t.Fatalf("Stop = %v, want a refusal", err)
 	}
@@ -242,7 +250,7 @@ func TestProbe(t *testing.T) {
 func TestLogPathCreatesLogDir(t *testing.T) {
 	home := isolateHome(t)
 
-	path, err := LogPath()
+	path, err := LogPath(filepath.Join(home, ".lezz"))
 	if err != nil {
 		t.Fatalf("LogPath: %v", err)
 	}

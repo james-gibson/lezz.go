@@ -39,6 +39,12 @@ type Options struct {
 	// register into it (lezz.go#59). An unspecified host (0.0.0.0, ::) or a
 	// specific LAN IP publishes it — and only then is it advertised over mDNS.
 	RegistryBind string
+
+	// StateDir is where this cluster keeps its state, ports, generated adhd
+	// config and logs. Empty falls back to $LEZZ_DEMO_STATE_DIR, then ~/.lezz.
+	// A cluster that is one of several takes its own directory so it can run
+	// under the real HOME instead of a fake one (lezz.go#60).
+	StateDir string
 }
 
 // Ports is the listener set a demo cluster owns.
@@ -60,6 +66,7 @@ type State struct {
 	Discovery    string      `json:"discovery,omitempty"`
 	StableConfig string      `json:"stable_config,omitempty"`
 	LogDir       string      `json:"log_dir,omitempty"`
+	StateDir     string      `json:"state_dir,omitempty"`
 }
 
 // Health is one probed endpoint of a running cluster.
@@ -70,7 +77,9 @@ type Health struct {
 	Detail   string
 }
 
-// lezzDir returns ~/.lezz, creating it.
+// lezzDir returns ~/.lezz, creating it. It is the home of lezz's own ledgers
+// (project routes, tool state) — not of a demo cluster's state, which lives in
+// its own directory so several clusters can share one HOME (lezz.go#60).
 func lezzDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -83,28 +92,56 @@ func lezzDir() (string, error) {
 	return dir, nil
 }
 
-func portsFile() (string, error) {
-	dir, err := lezzDir()
-	if err != nil {
-		return "", err
+// StateDirEnv names the environment variable that relocates a demo cluster's
+// state. The flag wins; this is the fallback for a detached run whose argv the
+// operator does not spell out.
+const StateDirEnv = "LEZZ_DEMO_STATE_DIR"
+
+// ResolveStateDir returns the directory a demo cluster keeps its state in, and
+// creates it.
+//
+// The default is ~/.lezz, which is what a single cluster has always used. A
+// cluster that is one of several wants its own directory instead: state, ports,
+// the generated adhd config and logs all move with it, so two clusters can run
+// under the real HOME rather than each getting a fake one to hide ~/.config/gh
+// and the rest of the operator's credentials (lezz.go#60).
+//
+// The value is made absolute so a detached child, which re-executes from the
+// caller's working directory, writes where the parent looked.
+func ResolveStateDir(stateDir string) (string, error) {
+	dir := stateDir
+	if dir == "" {
+		dir = os.Getenv(StateDirEnv)
 	}
-	return filepath.Join(dir, "demo-ports.json"), nil
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("home dir: %w", err)
+		}
+		dir = filepath.Join(home, ".lezz")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve state dir %q: %w", dir, err)
+	}
+	if err := os.MkdirAll(abs, 0o750); err != nil { //nolint:gosec // G703: --state-dir is the operator's own path, by design
+		return "", fmt.Errorf("create state dir %s: %w", abs, err)
+	}
+	return abs, nil
 }
 
-func stateFile() (string, error) {
-	dir, err := lezzDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "demo-state.json"), nil
+// statePath is the running cluster's record inside dir.
+func statePath(dir string) string {
+	return filepath.Join(dir, "demo-state.json")
+}
+
+// portsPath is the port ledger inside dir.
+func portsPath(dir string) string {
+	return filepath.Join(dir, "demo-ports.json")
 }
 
 // LogPath is where `lezz demo start` sends the detached child's output.
-func LogPath() (string, error) {
-	dir, err := lezzDir()
-	if err != nil {
-		return "", err
-	}
+func LogPath(dir string) (string, error) {
 	logDir := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		return "", fmt.Errorf("create log dir: %w", err)
@@ -112,13 +149,9 @@ func LogPath() (string, error) {
 	return filepath.Join(logDir, "demo.log"), nil
 }
 
-// loadPorts returns the ports the last run used, if any.
-func loadPorts() (Ports, bool) {
-	path, err := portsFile()
-	if err != nil {
-		return Ports{}, false
-	}
-	data, err := os.ReadFile(path) //nolint:gosec // path is ~/.lezz/demo-ports.json
+// loadPorts returns the ports the last run in dir used, if any.
+func loadPorts(dir string) (Ports, bool) {
+	data, err := os.ReadFile(portsPath(dir)) //nolint:gosec // path is the cluster's own state file
 	if err != nil {
 		return Ports{}, false
 	}
@@ -129,16 +162,12 @@ func loadPorts() (Ports, bool) {
 	return p, true
 }
 
-func savePorts(p Ports) error {
-	path, err := portsFile()
-	if err != nil {
-		return err
-	}
+func savePorts(p Ports, dir string) error {
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode demo ports: %w", err)
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600) //nolint:gosec // ~/.lezz, 0600 by design
+	return os.WriteFile(portsPath(dir), append(data, '\n'), 0o600) //nolint:gosec // the cluster's own state dir, 0600 by design
 }
 
 // portFree reports whether a listener can bind port on loopback.
@@ -182,9 +211,10 @@ func validatePins(opts Options) error {
 
 // resolvePorts picks the three listener ports. Pinned ports win and fail closed
 // when they are taken; otherwise the previous run's port is reused when free,
-// so restarts keep the same endpoints.
-func resolvePorts(opts Options) (Ports, error) {
-	previous, _ := loadPorts()
+// so restarts keep the same endpoints. The ledger is per state dir, so a second
+// cluster under the same HOME does not inherit the first one's ports.
+func resolvePorts(opts Options, dir string) (Ports, error) {
+	previous, _ := loadPorts(dir)
 	used := make(map[int]bool, 3)
 
 	take := func(label, flagName string, pinned, last int) (int, error) {
@@ -231,25 +261,17 @@ func resolvePorts(opts Options) (Ports, error) {
 	return Ports{AlarmA: alarmA, AlarmB: alarmB, ADHD: adhd, SavedAt: time.Now().UTC()}, nil
 }
 
-// writeState publishes the running cluster.
-func writeState(s State) error {
-	path, err := stateFile()
-	if err != nil {
-		return err
-	}
+// writeState publishes the running cluster inside its state dir.
+func writeState(s State, dir string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode demo state: %w", err)
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600) //nolint:gosec // ~/.lezz, 0600 by design
+	return os.WriteFile(statePath(dir), append(data, '\n'), 0o600) //nolint:gosec // the cluster's own state dir, 0600 by design
 }
 
-func readState() (State, bool) {
-	path, err := stateFile()
-	if err != nil {
-		return State{}, false
-	}
-	data, err := os.ReadFile(path) //nolint:gosec // path is ~/.lezz/demo-state.json
+func readState(dir string) (State, bool) {
+	data, err := os.ReadFile(statePath(dir)) //nolint:gosec // path is the cluster's own state file
 	if err != nil {
 		return State{}, false
 	}
@@ -260,15 +282,15 @@ func readState() (State, bool) {
 	return s, true
 }
 
-// RunningState returns the state of a live demo cluster. A state file whose
-// process is gone is stale and is removed.
-func RunningState() (State, bool) {
-	s, ok := readState()
+// RunningState returns the state of a live demo cluster recorded in dir. A state
+// file whose process is gone is stale and is removed.
+func RunningState(dir string) (State, bool) {
+	s, ok := readState(dir)
 	if !ok {
 		return State{}, false
 	}
 	if !processAlive(s.PID) {
-		removeState(s.PID)
+		removeState(s.PID, dir)
 		return State{}, false
 	}
 	return s, true
@@ -276,50 +298,52 @@ func RunningState() (State, bool) {
 
 // removeState deletes the state file only when it still describes pid, so a
 // finishing cluster cannot delete its successor's state.
-func removeState(pid int) {
-	s, ok := readState()
+func removeState(pid int, dir string) {
+	s, ok := readState(dir)
 	if !ok || s.PID != pid {
 		return
 	}
-	path, err := stateFile()
-	if err != nil {
-		return
-	}
-	_ = os.Remove(path)
+	_ = os.Remove(statePath(dir))
 }
 
 // StartDetached launches `lezz demo` as a detached child and waits until it has
 // published its state, so the caller can print real endpoints instead of a
-// guess. The child's output goes to ~/.lezz/logs/demo.log.
+// guess. The child writes to the cluster's own state dir, which is passed to it
+// explicitly so a `LEZZ_DEMO_STATE_DIR` inherited from somewhere else cannot
+// move it.
 func StartDetached(ctx context.Context, opts Options) (State, error) {
-	if running, ok := RunningState(); ok {
-		return State{}, fmt.Errorf("a demo cluster is already running (pid %d); lezz demo status", running.PID)
+	dir, err := ResolveStateDir(opts.StateDir)
+	if err != nil {
+		return State{}, err
+	}
+	if running, ok := RunningState(dir); ok {
+		return State{}, fmt.Errorf("a demo cluster is already running in %s (pid %d); lezz demo status --state-dir %s", dir, running.PID, dir)
 	}
 	// Report a pinned-port conflict here rather than leaving the caller to read
 	// the child's log.
-	if err := validatePins(opts); err != nil {
-		return State{}, err
+	if pinErr := validatePins(opts); pinErr != nil {
+		return State{}, pinErr
 	}
 	// Same reason for the binds: an unparseable --registry-bind must fail here,
 	// where the operator can see it, not in the detached child's log.
-	if _, _, err := registryHost(opts.RegistryBind, ""); err != nil {
-		return State{}, err
+	if _, _, bindErr := registryHost(opts.RegistryBind, ""); bindErr != nil {
+		return State{}, bindErr
 	}
 
 	exe, err := os.Executable()
 	if err != nil {
 		return State{}, fmt.Errorf("locate executable: %w", err)
 	}
-	logPath, err := LogPath()
+	logPath, err := LogPath(dir)
 	if err != nil {
 		return State{}, err
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // ~/.lezz/logs/demo.log
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // the cluster's own state dir
 	if err != nil {
 		return State{}, fmt.Errorf("open demo log %s: %w", logPath, err)
 	}
 
-	args := []string{"demo"}
+	args := []string{"demo", "--state-dir=" + dir}
 	if opts.AlarmAPort > 0 {
 		args = append(args, fmt.Sprintf("--alarm-a-port=%d", opts.AlarmAPort))
 	}
@@ -361,7 +385,7 @@ func StartDetached(ctx context.Context, opts Options) (State, error) {
 			return State{}, fmt.Errorf("demo exited during startup (%w); last output from %s:\n%s", waitErr, logPath, tailFile(logPath, 20))
 		default:
 		}
-		if state, ok := readState(); ok && state.PID == pid {
+		if state, ok := readState(dir); ok && state.PID == pid {
 			return state, nil
 		}
 		if time.Now().After(deadline) {
@@ -375,10 +399,10 @@ func StartDetached(ctx context.Context, opts Options) (State, error) {
 	}
 }
 
-// Stop terminates the running cluster and waits for it to exit. It returns nil
-// when nothing is running.
-func Stop(timeout time.Duration) error {
-	state, ok := RunningState()
+// Stop terminates the cluster recorded in dir and waits for it to exit. It
+// returns nil when nothing is running there.
+func Stop(dir string, timeout time.Duration) error {
+	state, ok := RunningState(dir)
 	if !ok {
 		return nil
 	}
@@ -397,7 +421,7 @@ func Stop(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if !processAlive(state.PID) {
-			removeState(state.PID)
+			removeState(state.PID, dir)
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)

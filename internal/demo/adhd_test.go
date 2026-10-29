@@ -156,7 +156,7 @@ func TestReadinessError_CarriesTheChildsOwnWords(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	logPath := writeLog(t, "flag provided but not defined: -force\nUsage of adhd:\n")
 
-	err := readinessError("adhd MCP", errors.New("exited during startup (exit status 2)"), logPath)
+	err := readinessError("adhd MCP", errors.New("exited during startup (exit status 2)"), logPath, "")
 	for _, want := range []string{
 		"adhd MCP readiness",
 		"exited during startup (exit status 2)",
@@ -216,7 +216,7 @@ func TestLogEvidence_SurvivesTheTempRoot(t *testing.T) {
 
 	logPath := writeLog(t, "line one\nline two\n")
 
-	evidence := logEvidence(logPath)
+	evidence := logEvidence(logPath, "")
 	kept := filepath.Join(home, ".lezz", "logs", "demo-"+filepath.Base(logPath))
 	if !strings.Contains(evidence, kept) {
 		t.Fatalf("evidence %q does not name the kept log %s", evidence, kept)
@@ -241,7 +241,7 @@ func TestLogEvidence_SurvivesTheTempRoot(t *testing.T) {
 }
 
 func TestLogEvidence_NoOutput(t *testing.T) {
-	if got := logEvidence(filepath.Join(t.TempDir(), "absent.log")); got != "the service wrote no output" {
+	if got := logEvidence(filepath.Join(t.TempDir(), "absent.log"), ""); got != "the service wrote no output" {
 		t.Fatalf("logEvidence(absent) = %q", got)
 	}
 }

@@ -423,11 +423,11 @@ func RunAuto(ctx context.Context, registryBind string) error {
 	// --- Poll alarm readiness -----------------------------------------------
 	fmt.Println("waiting for alarm-a to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portA)); readyErr != nil {
-		return readinessError("alarm-a", readyErr, alarmALogPath)
+		return readinessError("alarm-a", readyErr, alarmALogPath, "")
 	}
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", portB)); readyErr != nil {
-		return readinessError("alarm-b", readyErr, alarmBLogPath)
+		return readinessError("alarm-b", readyErr, alarmBLogPath, "")
 	}
 
 	host := outboundIP()
@@ -511,7 +511,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 	// polling always times out. A TCP dial on the port is sufficient.
 	fmt.Println("waiting for adhd MCP to become ready...")
 	if readyErr := waitServiceOpen(ctx, fmt.Sprintf("0.0.0.0:%d", adhdPort), adhdExited); readyErr != nil {
-		return readinessError("adhd MCP", readyErr, adhdLogPath)
+		return readinessError("adhd MCP", readyErr, adhdLogPath, "")
 	}
 
 	// Tell our own ADHD about this cluster so it registers the cluster peer and
