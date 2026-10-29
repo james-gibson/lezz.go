@@ -395,6 +395,14 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	// Where the discovery registry listens. Also resolved before anything
+	// starts: an invalid --registry-bind must fail here, not in a detached
+	// child's log, and the bind decides whether mDNS may advertise it.
+	registry, err := resolveRegistryListener(opts.RegistryBind)
+	if err != nil {
+		return err
+	}
+
 	// --- Temp directories ---------------------------------------------------
 	tmpRoot, err := os.MkdirTemp("", "lezz-demo-*")
 	if err != nil {
@@ -526,18 +534,21 @@ func Run(ctx context.Context, opts Options) error {
 	// without waiting for another cluster to join.
 	sendJoin(context.Background(), clusterInfo.AdhdMCP, clusterInfo)
 
-	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo)
+	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo, registry)
 	switch discoveryErr {
 	case nil:
-		// We own the port — also register mDNS so LAN clients can find us.
+		// We own the port — advertise it over mDNS only if the bind is
+		// reachable from the LAN. A loopback registry has nothing to announce.
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer shutdownCancel()
 			_ = discoverySrv.Shutdown(shutdownCtx)
 		}()
-		if mdnsSrv, mdnsErr := registerMDNS(); mdnsErr != nil {
+		mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
+		switch {
+		case mdnsErr != nil:
 			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
-		} else {
+		case mdnsSrv != nil:
 			defer mdnsSrv.Shutdown()
 		}
 	default:
@@ -562,7 +573,7 @@ func Run(ctx context.Context, opts Options) error {
 		StartedAt:    time.Now().UTC(),
 		Cluster:      clusterInfo,
 		Ports:        ports,
-		Discovery:    fmt.Sprintf("http://%s:%d/cluster", host, DiscoveryPort),
+		Discovery:    registry.registryURL(),
 		StableConfig: stableConfigPath,
 		LogDir:       tmpRoot,
 	}
@@ -582,7 +593,7 @@ alarm-a      %s/status
 alarm-b      %s/status
 adhd MCP     %s
 isotopes     %s
-discovery    http://%s:%d/cluster
+discovery    %s
 
 connect dashboard:  adhd --config %s
 
@@ -591,7 +602,7 @@ logs         %s
              %s
 
 Ctrl+C to stop
-`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, host, DiscoveryPort, stableConfigPath,
+`, clusterInfo.AlarmA, clusterInfo.AlarmB, clusterInfo.AdhdMCP, trustSummary, registry.registryURL(), stableConfigPath,
 		alarmALogPath, alarmBLogPath, adhdLogPath)
 
 	// --- Wait for shutdown signal -------------------------------------------

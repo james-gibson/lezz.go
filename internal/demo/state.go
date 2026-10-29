@@ -31,6 +31,14 @@ type Options struct {
 	// as a bypass (lezz.go#58). The alarms keep their all-interfaces bind
 	// either way: their /status is read-only.
 	ADHDBind string
+
+	// RegistryBind is the host the /cluster discovery registry listens on.
+	// Empty is loopback (RegistryBindDefault): the registry is an
+	// unauthenticated read-and-write directory, so the default keeps it off the
+	// LAN, where remote `lezz see` and `adhd --demo` cannot enumerate it or
+	// register into it (lezz.go#59). An unspecified host (0.0.0.0, ::) or a
+	// specific LAN IP publishes it — and only then is it advertised over mDNS.
+	RegistryBind string
 }
 
 // Ports is the listener set a demo cluster owns.
@@ -292,6 +300,11 @@ func StartDetached(ctx context.Context, opts Options) (State, error) {
 	if err := validatePins(opts); err != nil {
 		return State{}, err
 	}
+	// Same reason for the binds: an unparseable --registry-bind must fail here,
+	// where the operator can see it, not in the detached child's log.
+	if _, _, err := registryHost(opts.RegistryBind, ""); err != nil {
+		return State{}, err
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -318,6 +331,9 @@ func StartDetached(ctx context.Context, opts Options) (State, error) {
 	}
 	if opts.ADHDBind != "" {
 		args = append(args, "--adhd-bind="+opts.ADHDBind)
+	}
+	if opts.RegistryBind != "" {
+		args = append(args, "--registry-bind="+opts.RegistryBind)
 	}
 
 	cmd := exec.Command(exe, args...) //nolint:gosec // exe is this binary, resolved via os.Executable

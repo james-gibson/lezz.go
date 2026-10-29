@@ -79,7 +79,7 @@ without `--force`.
 1. loads and validates the seed;
 2. computes `42 + 0i (seed-42, rung 0)`;
 3. resolves the auth reference to present/absent/invalid (never the value);
-4. reads the registry at `:19100/cluster` and prints a matching surface.
+4. reads the registry at `localhost:19100/cluster` and prints a matching surface.
 
 It does not claim, join, or create. Those need the decisions below.
 
