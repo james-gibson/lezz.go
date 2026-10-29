@@ -181,11 +181,11 @@ func main() {
 	}
 }
 
-// lezz demo [start|stop|status|restart] [--*-port N]
+// lezz demo [start|stop|status|restart] [--*-port N] [--state-dir PATH]
 //
 // Bare `lezz demo` runs the cluster in the foreground. `start` runs the same
-// cluster detached, publishing ~/.lezz/demo-state.json so `status` and `stop`
-// can reach it from any terminal.
+// cluster detached, publishing demo-state.json inside the cluster's state dir
+// (~/.lezz by default) so `status` and `stop` can reach it from any terminal.
 func cmdDemo(ctx context.Context) {
 	args := os.Args[2:]
 	if len(args) > 0 {
@@ -231,25 +231,37 @@ func cmdDemoStart(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 	printDemoState(state)
-	if logPath, logErr := demo.LogPath(); logErr == nil {
+	if logPath, logErr := demo.LogPath(state.StateDir); logErr == nil {
 		fmt.Printf("\nlogs         %s\n", logPath)
 	}
-	fmt.Print("stop         lezz demo stop\n")
+	fmt.Printf("stop         lezz demo stop%s\n", stateDirFlag(state.StateDir))
+}
+
+// stateDirFlag renders the --state-dir suffix a follow-up command needs, and
+// nothing when the cluster used the default directory.
+func stateDirFlag(stateDir string) string {
+	if stateDir == "" {
+		return ""
+	}
+	if def, err := demo.ResolveStateDir(""); err == nil && def == stateDir {
+		return ""
+	}
+	return " --state-dir " + stateDir
 }
 
 func cmdDemoStop(args []string) {
-	if helpOnly("demo stop", args) {
+	fs, stateDir := newDemoStateFlagSet("demo stop")
+	if !parseOrHelp(fs, args) {
 		return
 	}
-	if len(args) > 0 {
-		fmt.Fprintf(os.Stderr, "demo stop: unexpected argument %q\n", args[0])
-		os.Exit(2)
-	}
-	if _, ok := demo.RunningState(); !ok {
-		fmt.Println("demo: not running")
+	noPositional("demo stop", fs)
+	dir := resolveDemoStateDir("demo stop", *stateDir)
+
+	if _, ok := demo.RunningState(dir); !ok {
+		fmt.Printf("demo: not running in %s\n", dir)
 		return
 	}
-	if err := demo.Stop(15 * time.Second); err != nil {
+	if err := demo.Stop(dir, 15*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "demo stop:", err)
 		os.Exit(1)
 	}
@@ -257,17 +269,16 @@ func cmdDemoStop(args []string) {
 }
 
 func cmdDemoStatus(ctx context.Context, args []string) {
-	if helpOnly("demo status", args) {
+	fs, stateDir := newDemoStateFlagSet("demo status")
+	if !parseOrHelp(fs, args) {
 		return
 	}
-	if len(args) > 0 {
-		fmt.Fprintf(os.Stderr, "demo status: unexpected argument %q\n", args[0])
-		os.Exit(2)
-	}
+	noPositional("demo status", fs)
+	dir := resolveDemoStateDir("demo status", *stateDir)
 
-	state, ok := demo.RunningState()
+	state, ok := demo.RunningState(dir)
 	if !ok {
-		fmt.Println("demo: not running")
+		fmt.Printf("demo: not running in %s\n", dir)
 		os.Exit(1)
 	}
 	printDemoState(state)
@@ -290,6 +301,9 @@ func cmdDemoStatus(ctx context.Context, args []string) {
 	if state.LogDir != "" {
 		fmt.Printf("\nlogs         %s/{alarm-a,alarm-b,adhd}.log\n", state.LogDir)
 	}
+	if state.StateDir != "" {
+		fmt.Printf("state        %s\n", state.StateDir)
+	}
 }
 
 func cmdDemoRestart(ctx context.Context, args []string) {
@@ -298,12 +312,13 @@ func cmdDemoRestart(ctx context.Context, args []string) {
 		return
 	}
 	noPositional("demo restart", fs)
+	dir := resolveDemoStateDir("demo restart", flags.stateDir)
 
-	running, ok := demo.RunningState()
+	running, ok := demo.RunningState(dir)
 	if ok {
 		fmt.Printf("stopping demo (pid %d)...\n", running.PID)
 	}
-	if err := demo.Stop(15 * time.Second); err != nil {
+	if err := demo.Stop(dir, 15*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "demo restart:", err)
 		os.Exit(1)
 	}
@@ -316,13 +331,15 @@ func cmdDemoRestart(ctx context.Context, args []string) {
 	printDemoState(state)
 }
 
-// demoFlags holds the port pins shared by demo, demo start and demo restart.
+// demoFlags holds the port pins and binds shared by demo, demo start and demo
+// restart.
 type demoFlags struct {
 	alarmA       int
 	alarmB       int
 	adhd         int
 	adhdBind     string
 	registryBind string
+	stateDir     string
 }
 
 func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
@@ -333,6 +350,7 @@ func newDemoFlagSet(name string) (*flag.FlagSet, *demoFlags) {
 	fs.IntVar(&flags.adhd, "adhd-port", 0, "pin the adhd MCP port (default: reuse the last run's port when it is free)")
 	fs.StringVar(&flags.adhdBind, "adhd-bind", "", "host for the adhd MCP listener (default: all interfaces; 127.0.0.1 keeps the raw MCP surface off the LAN)")
 	fs.StringVar(&flags.registryBind, "registry-bind", "", "host for the /cluster discovery registry (default: 127.0.0.1; 0.0.0.0 publishes it to the LAN and advertises it over mDNS)")
+	fs.StringVar(&flags.stateDir, "state-dir", "", "directory holding this cluster's state, ports, adhd config and logs (default: $LEZZ_DEMO_STATE_DIR, then ~/.lezz)")
 	return fs, flags
 }
 
@@ -343,7 +361,28 @@ func (f *demoFlags) options() demo.Options {
 		ADHDPort:     f.adhd,
 		ADHDBind:     f.adhdBind,
 		RegistryBind: f.registryBind,
+		StateDir:     f.stateDir,
 	}
+}
+
+// newDemoStateFlagSet is the flag set for the commands that only read a
+// cluster's state. They need the same --state-dir the cluster was started with,
+// and nothing else (lezz.go#60).
+func newDemoStateFlagSet(name string) (*flag.FlagSet, *string) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "", "directory holding the cluster's state (default: $LEZZ_DEMO_STATE_DIR, then ~/.lezz)")
+	return fs, stateDir
+}
+
+// resolveDemoStateDir resolves --state-dir for a state-reading command, failing
+// loudly rather than silently looking in the default dir.
+func resolveDemoStateDir(cmd, stateDir string) string {
+	dir, err := demo.ResolveStateDir(stateDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, cmd+":", err)
+		os.Exit(1)
+	}
+	return dir
 }
 
 // noPositional rejects bare arguments after the flags.
