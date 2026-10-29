@@ -287,8 +287,23 @@ func joinDiscoveryServer(info ClusterInfo) (deregFn func(), err error) {
 
 // registerMDNS advertises the lezz demo registry via mDNS/DNS-SD.
 // Clients browse for _lezz-demo._tcp then GET /cluster for the full list.
-func registerMDNS() (*zeroconf.Server, error) {
-	return zeroconf.Register("lezz-demo", mdnsService, mdnsDomain, DiscoveryPort, []string{"v=1"}, nil)
+//
+// The cluster identity rides in the TXT record because a verifier may not accept
+// "a demo is running" as evidence: isotope resolves an advertisement to the
+// cluster it is checking, and a record that names no cluster proves nothing
+// (isotope#23).
+func registerMDNS(cluster string) (*zeroconf.Server, error) {
+	return zeroconf.Register("lezz-demo", mdnsService, mdnsDomain, DiscoveryPort, mdnsTXT(cluster), nil)
+}
+
+// mdnsTXT is the advertisement's TXT set. Split out so a test can assert the
+// cluster identity is published without depending on multicast.
+func mdnsTXT(cluster string) []string {
+	txt := []string{"v=1"}
+	if cluster != "" {
+		txt = append(txt, "cluster="+cluster)
+	}
+	return txt
 }
 
 // registerRegistryMDNS advertises the registry over DNS-SD, but only when the
@@ -296,11 +311,11 @@ func registerMDNS() (*zeroconf.Server, error) {
 // name a service no peer can dial — and announce a directory that is not there
 // to every browser that lists it. It returns (nil, nil) when no advertisement is
 // published, so a caller never has to Shutdown a nil server.
-func registerRegistryMDNS(rl registryListener) (*zeroconf.Server, error) {
+func registerRegistryMDNS(rl registryListener, cluster string) (*zeroconf.Server, error) {
 	if !rl.LAN {
 		return nil, nil
 	}
-	return registerMDNS()
+	return registerMDNS(cluster)
 }
 
 // outboundIP returns the machine's preferred outbound IP address.

@@ -307,6 +307,33 @@ where you want `lezz see` and `adhd --demo` from other hosts to find this
 machine, and remember that a published registry is a write surface as well as a
 read one.
 
+### Trust: what the registry cannot prove
+
+The registry is a directory, not evidence. Anyone who holds `19100` can serve
+`GET /cluster` and claim any endpoint, which is exactly what a smoke-alarm's
+`/isotope/register` used to believe: measured before isotope#23, a 15-line
+server on `127.0.0.1:19100` earned rung 4 for an endpoint nothing served.
+
+So a lezz cluster now mints one **launch secret** when it starts, and hands it to
+the processes it trusts:
+
+- to the smoke-alarm instances that verify registrations (`trust.clusters` in
+  their config — rendered into the generated configs for `auto`/`prod`, set
+  in-process for `demo`), and
+- to each `adhd` it spawns (`LEZZ_CLUSTER_ID`, `LEZZ_CLUSTER_SECRET`), which
+  signs a receipt over the cluster and its own endpoint on every registration.
+
+The secret never crosses a socket; only the receipt does. The alarm re-computes
+it and grants 6 (attested + registry entry for that cluster naming this
+host:port + mDNS naming the cluster) or 4 (no advertisement — a rolling restart
+looks like this), and **2 for anything unattested**. Read the evidence in
+`GET /isotope/list`: each record carries `attested_by` and the reasons behind its
+rung.
+
+`lezz prod` keeps its secret in the cluster's state directory rather than its
+argv, so a rotated generation inherits it: a handoff must not read as a trust
+reset, and `ps` must not show the key.
+
 Connect the dashboard to a running demo cluster:
 
 ```sh

@@ -74,6 +74,7 @@ alerts:
     log:
       enabled: true
 
+{{.TrustYAML}}
 targets:
   - id: "peer"
     enabled: true
@@ -92,7 +93,8 @@ type linkParams struct {
 	StateDir   string // per-link state dir; holds that link's known-state baseline
 	PeerName   string
 	PeerPort   int
-	Advertise  bool // mDNS advertisement for tuner
+	Advertise  bool   // mDNS advertisement for tuner
+	TrustYAML  string // trust block: the cluster secret this link verifies with
 }
 
 // buildLinkConfig renders and validates one link's config.

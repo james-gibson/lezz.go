@@ -69,6 +69,7 @@ alerts:
     log:
       enabled: true
 
+{{.TrustYAML}}
 # Base cluster: empty and awaiting. Targets are registered at runtime via
 # discovery (auto-refresh) or pushed via remote management — never hardcoded.
 targets: []
@@ -130,6 +131,7 @@ type baseSmokeAlarmConfig struct {
 	ConfigPath         string
 	LogPath            string
 	ClusterID          string
+	TrustYAML          string // trust block: the cluster secret this link verifies with
 	FederationBasePort int
 	FederationMaxPort  int
 }
@@ -155,29 +157,55 @@ func baseClusterID() string {
 // identity was supplied, it retries without that field and warns instead of
 // failing the whole cluster.
 func writeValidatedAlarmConfig(ctx context.Context, dir, name, binary string, cfg baseSmokeAlarmConfig) (string, error) {
+	// Degrade one optional field at a time, so an older binary still gives a
+	// working cluster: first the federation identity (chaining), then the cluster
+	// trust block (attestation). Each drop is reported, because both are
+	// behavior the operator would otherwise discover from a rung.
+	for _, degrade := range []struct {
+		field string
+		drop  func(*baseSmokeAlarmConfig)
+		warn  string
+	}{
+		{
+			field: "cluster_id",
+			drop:  func(c *baseSmokeAlarmConfig) { c.ClusterID = "" },
+			warn:  "warning: installed ocd-smoke-alarm does not support cluster_id; base cluster links will not self-trust — run: lezz tools upgrade ocd-smoke-alarm",
+		},
+		{
+			field: "trust",
+			drop:  func(c *baseSmokeAlarmConfig) { c.TrustYAML = "" },
+			warn:  "warning: installed ocd-smoke-alarm does not support a trust block; registrations will be unattested (rung 2) — run: lezz tools upgrade ocd-smoke-alarm",
+		},
+	} {
+		path, err := writeTempConfig(dir, name, baseSmokeAlarmConfigTmpl, cfg)
+		if err != nil {
+			return "", err
+		}
+		validateErr := alarmValidate(ctx, binary, path)
+		if validateErr == nil {
+			return path, nil
+		}
+		drop := false
+		switch degrade.field {
+		case "cluster_id":
+			drop = cfg.ClusterID != ""
+		case "trust":
+			drop = cfg.TrustYAML != ""
+		}
+		if !drop {
+			return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
+		}
+		degrade.drop(&cfg)
+		fmt.Fprintln(os.Stderr, degrade.warn)
+	}
+	// Both optional fields are gone; validate the last render.
 	path, err := writeTempConfig(dir, name, baseSmokeAlarmConfigTmpl, cfg)
-	if err != nil {
-		return "", err
-	}
-
-	if validateErr := alarmValidate(ctx, binary, path); validateErr == nil {
-		return path, nil
-	} else if cfg.ClusterID == "" {
-		return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
-	}
-
-	// The installed binary does not know cluster_id; fall back to a config
-	// without it so `lezz auto` still chains, just without self-trust.
-	cfg.ClusterID = ""
-	path, err = writeTempConfig(dir, name, baseSmokeAlarmConfigTmpl, cfg)
 	if err != nil {
 		return "", err
 	}
 	if validateErr := alarmValidate(ctx, binary, path); validateErr != nil {
 		return "", fmt.Errorf("config %s rejected by %s: %w", name, binary, validateErr)
 	}
-	fmt.Fprintf(os.Stderr,
-		"warning: installed ocd-smoke-alarm does not support cluster_id; base cluster links will not self-trust — run: lezz tools upgrade ocd-smoke-alarm\n")
 	return path, nil
 }
 
@@ -373,6 +401,15 @@ func RunAuto(ctx context.Context, registryBind string) error {
 		return fmt.Errorf("resolve ocd-smoke-alarm: %w", err)
 	}
 
+	// The base cluster's trust root: one secret for both links and for the adhd
+	// they verify. Without it every registration is a self-declared endpoint and
+	// lands at the floor (isotope#23).
+	clusterID := baseClusterName()
+	trust, err := newClusterTrust(clusterID)
+	if err != nil {
+		return err
+	}
+
 	// --- Write empty, awaiting configs --------------------------------------
 	// Both instances share the same federation port range, so they chain into a
 	// mesh automatically: whichever binds federationBasePort first is the
@@ -385,6 +422,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 		ConfigPath:         tmpRoot + "/alarm-a.yaml",
 		LogPath:            alarmALogPath,
 		ClusterID:          baseClusterID(),
+		TrustYAML:          trust.yaml(),
 		FederationBasePort: federationBasePort,
 		FederationMaxPort:  federationMaxPort,
 	})
@@ -400,6 +438,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 		ConfigPath:         tmpRoot + "/alarm-b.yaml",
 		LogPath:            alarmBLogPath,
 		ClusterID:          baseClusterID(),
+		TrustYAML:          trust.yaml(),
 		FederationBasePort: federationBasePort,
 		FederationMaxPort:  federationMaxPort,
 	})
@@ -432,7 +471,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 
 	host := outboundIP()
 	clusterInfo := ClusterInfo{
-		Name:     baseClusterName(),
+		Name:     clusterID,
 		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
 		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
 		AdhdMCP:  fmt.Sprintf("http://%s:%d/mcp", host, adhdPort),
@@ -450,7 +489,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 			defer shutdownCancel()
 			_ = discoverySrv.Shutdown(shutdownCtx)
 		}()
-		mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
+		mdnsSrv, mdnsErr := registerRegistryMDNS(registry, clusterID)
 		switch {
 		case mdnsErr != nil:
 			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
@@ -499,7 +538,7 @@ func RunAuto(ctx context.Context, registryBind string) error {
 	for _, note := range adhdNotes {
 		fmt.Printf("adhd: %s\n", note)
 	}
-	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, nil)
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, trust.env())
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}

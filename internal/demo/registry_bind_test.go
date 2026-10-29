@@ -72,7 +72,7 @@ func TestRegistryMDNSIsSuppressedOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve default: %v", err)
 	}
-	srv, err := registerRegistryMDNS(loopback)
+	srv, err := registerRegistryMDNS(loopback, "demo-1")
 	if err != nil {
 		t.Fatalf("registerRegistryMDNS(loopback) = %v, want a silent no-op", err)
 	}

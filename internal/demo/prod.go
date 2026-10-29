@@ -264,6 +264,9 @@ type prodPlan struct {
 	Cluster            ClusterInfo
 	Isotopes           []isotope.Registration
 	FederationBasePort int
+	// Trust is the cluster's launch secret. The zero value attests nothing, which
+	// is what a plan built by a fuzz target or a test gets.
+	Trust clusterTrust
 }
 
 func buildProdPlan(opts ProdOptions, host string) (prodPlan, error) {
@@ -346,6 +349,7 @@ func (p prodPlan) alarmConfig(n prodNode, binary, root string) prodAlarmConfig {
 		ClusterID:          p.Options.Isotope + "-a",
 		FederationBasePort: p.FederationBasePort,
 		FederationMaxPort:  p.FederationBasePort + 1,
+		TrustYAML:          p.Trust.yaml(),
 	}
 }
 
@@ -423,8 +427,9 @@ alerts:
     log:
       enabled: true
 
+{{.TrustYAML}}
 # Targets arrive at runtime, by discovery or remote management. Prod does not
-# peer the nodes as targets: a dashboard must not learn that alarm_a is
+# peer the nodes: a dashboard must not learn that alarm_a is
 # mirrored or that alarm_b is a separate physical node.
 targets: []
 
@@ -483,6 +488,7 @@ type prodAlarmConfig struct {
 	ClusterID          string
 	FederationBasePort int
 	FederationMaxPort  int
+	TrustYAML          string // trust block: the cluster secret this alarm verifies with
 }
 
 type prodADHDConfig struct {
@@ -523,6 +529,18 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	opts = plan.Options
 	nodes := plan.Nodes
 	primary := plan.Primary
+
+	// The cluster's trust root. It lives in the state dir rather than the argv so
+	// a rotated generation inherits the same secret instead of resetting every
+	// agent's rung on handoff, and so `ps` cannot read it.
+	trust, err := loadOrMintClusterTrust(root, opts.Isotope)
+	if err != nil {
+		return err
+	}
+	plan.Trust = trust
+	for i := range plan.Isotopes {
+		plan.Isotopes[i].Attestation = trust.attestation(plan.Isotopes[i].Endpoint)
+	}
 
 	if dirErr := ensureProdDirs(root, nodes); dirErr != nil {
 		return dirErr
@@ -569,7 +587,7 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	}
 
 	var mdnsStop func()
-	mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
+	mdnsSrv, mdnsErr := registerRegistryMDNS(registry, opts.Isotope)
 	switch {
 	case mdnsErr != nil:
 		fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
@@ -629,7 +647,7 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 			// Every node binds all interfaces so the LAN can reach it; the
 			// advertise guard requires this explicit statement (adhd#15).
 			"--force",
-		}, filepath.Join(root, "adhd-"+n.Name+".log"), skillEnviron(prodSkillsFor(root, n)))
+		}, filepath.Join(root, "adhd-"+n.Name+".log"), append(skillEnviron(prodSkillsFor(root, n)), trust.env()...))
 		if startErr != nil {
 			return fmt.Errorf("start adhd-%s: %w", n.Name, startErr)
 		}
@@ -642,7 +660,7 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	}
 
 	// --- Register the isotope identity -------------------------------------
-	trust := registerProdIsotopes(ctx, plan)
+	trustSummary := registerProdIsotopes(ctx, plan)
 
 	fmt.Printf(`
 lezz prod cluster ready
@@ -658,7 +676,7 @@ state        %s
 
 rotate       kill -HUP %d   (installs generation g%d as a launchd service)
 Ctrl+C to stop
-`, opts.Isotope, trust,
+`, opts.Isotope, trustSummary,
 		clusterInfo.AlarmA, primary.Name, nodes[1].Name, plan.FederationBasePort,
 		clusterInfo.AlarmB,
 		clusterInfo.AdhdMCP,
