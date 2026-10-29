@@ -114,6 +114,9 @@ func main() {
 		cmdSee(ctx)
 		cancel()
 
+	case "motd":
+		cmdMotd()
+
 	case "sea":
 		cmdSea(ctx)
 		cancel()
@@ -592,6 +595,26 @@ func cmdDebug(ctx context.Context) {
 // lezz see [--file seed.json]
 // Reads the seed, recomputes the 42i start, resolves the auth reference, and
 // shows the surface. It does not join or create anything yet.
+// cmdMotd prints the greeting a workspace user — or their agent — gets. It is
+// the same text the MCP surface returns from initialize, exposed so a shell
+// profile can show it once per login instead of the binary pretending to be a
+// login shell.
+func cmdMotd() {
+	help := os.Stderr
+	if helpRequested(os.Args[2:]) {
+		help = os.Stdout
+	}
+	if help == os.Stdout {
+		printCommandUsage(os.Stdout, "motd", nil)
+		return
+	}
+	if err := noArguments("motd", os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	fmt.Println(mcpwrapper.Motd)
+}
+
 func cmdSee(ctx context.Context) {
 	fs := flag.NewFlagSet("see", flag.ContinueOnError)
 	path := fs.String("file", "seed.json", "path to seed.json")
@@ -2306,6 +2329,7 @@ var commandDocs = []commandDoc{
 	{"seed", "lezz seed init", "Create seed.json: a stable project id, the surface to join, and an external auth reference", false},
 	{"seed init", "lezz seed init [--surface base]", "Create seed.json (project id, surface, auth ref)", true},
 	{"see", "lezz see", "Read seed.json, show the 42i start and surface", true},
+	{"motd", "lezz motd", "Print the message of the day for workspace users", true},
 	{"sea", "lezz sea [--install|--check|--open]", "Install and supervise lezz.sea: the app asks for isotopes over a stdio channel", true},
 	{"debug", "lezz debug keygen|lease|fetch-keys", "Debug lease keys and signing", true},
 	{"anon", "lezz anon [--lease FILE] [--listen host:port]", "Serve the anonymous MCP surface (empty tool list); the debug socket needs a valid lease", true},
