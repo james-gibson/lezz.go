@@ -238,7 +238,8 @@ func queryIsotopeTrust(ctx context.Context, smokeAlarmURL string) string {
 
 		if err == nil && len(entries) > 0 {
 			result := ""
-			for _, e := range entries {
+			for i := range entries {
+				e := &entries[i]
 				if result != "" {
 					result += ", "
 				}
@@ -404,6 +405,16 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	// The cluster's trust root: minted here, handed to the alarms that verify
+	// registrations and to the adhd that registers with them. Nothing else is
+	// evidence — a registry entry alone can be written by any local process
+	// (isotope#23).
+	clusterID := clusterName()
+	trust, err := newClusterTrust(clusterID)
+	if err != nil {
+		return err
+	}
+
 	// One cluster per state dir: a second run in the same dir would fight for
 	// the cluster's own files and leave two records pointing at different
 	// endpoints. A different dir is a different cluster — it allocates its own
@@ -475,6 +486,7 @@ func Run(ctx context.Context, opts Options) error {
 		PeerName:   "alarm-b",
 		PeerPort:   portB,
 		Advertise:  true,
+		TrustYAML:  trust.yaml(),
 	}, alarmALogPath)
 	if err != nil {
 		return err
@@ -488,6 +500,7 @@ func Run(ctx context.Context, opts Options) error {
 		PeerName:   "alarm-a",
 		PeerPort:   portA,
 		Advertise:  true,
+		TrustYAML:  trust.yaml(),
 	}, alarmBLogPath)
 	if err != nil {
 		return err
@@ -510,6 +523,52 @@ func Run(ctx context.Context, opts Options) error {
 	fmt.Println("waiting for alarm-b to become ready...")
 	if readyErr := waitReady(ctx, linkB.healthURL()); readyErr != nil {
 		return readinessError("alarm-b", readyErr, alarmBLogPath, stateDir)
+	}
+
+	// --- Start discovery (fixed port + mDNS) --------------------------------
+	// Before adhd, not after: adhd registers the moment it starts, and the
+	// verifier reads this registry to decide the rung. Starting the directory
+	// after the first registration made every cluster's first minute a
+	// registry-less "not found" — which is now the difference between being
+	// attested and not (isotope#23).
+	host := outboundIP()
+	clusterInfo := ClusterInfo{
+		Name:     clusterID,
+		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
+		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
+		AdhdMCP:  adhdListen.mcpURL(adhdPort),
+		Projects: projectSeedsFromEnv(),
+	}
+
+	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo, registry)
+	switch discoveryErr {
+	case nil:
+		// We own the port — advertise it over mDNS only if the bind is
+		// reachable from the LAN. A loopback registry has nothing to announce.
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer shutdownCancel()
+			_ = discoverySrv.Shutdown(shutdownCtx)
+		}()
+		mdnsSrv, mdnsErr := registerRegistryMDNS(registry, clusterID)
+		switch {
+		case mdnsErr != nil:
+			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
+		case mdnsSrv != nil:
+			defer mdnsSrv.Shutdown()
+		}
+	default:
+		// Port taken — try to join an existing lezz registry.
+		deregFn, joinErr := joinDiscoveryServer(clusterInfo)
+		if joinErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: discovery unavailable (port busy, not a lezz registry): %v\n", joinErr)
+		} else {
+			fmt.Printf("joined existing discovery registry as %s\n", clusterInfo.Name)
+			defer deregFn()
+			// Immediately push our cluster info to all existing ADHD MCP instances
+			// so their dashboards update without waiting for the next poll cycle.
+			notifyExistingADHD(clusterInfo)
+		}
 	}
 
 	adhdConfigPath, err := writeTempConfig(tmpRoot, "adhd", adhdConfigTmpl, adhdConfig{
@@ -540,7 +599,7 @@ func Run(ctx context.Context, opts Options) error {
 	for _, note := range adhdNotes {
 		fmt.Printf("adhd: %s\n", note)
 	}
-	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, nil)
+	cmdADHD, err := startBinary(adhdBin, adhdArgs, adhdLogPath, trust.env())
 	if err != nil {
 		return fmt.Errorf("start adhd: %w", err)
 	}
@@ -558,51 +617,10 @@ func Run(ctx context.Context, opts Options) error {
 		return readinessError("adhd MCP", readyErr, adhdLogPath, stateDir)
 	}
 
-	// --- Start discovery (fixed port + mDNS) --------------------------------
-	host := outboundIP()
-	clusterInfo := ClusterInfo{
-		Name:     clusterName(),
-		AlarmA:   fmt.Sprintf("http://%s:%d", host, portA),
-		AlarmB:   fmt.Sprintf("http://%s:%d", host, portB),
-		AdhdMCP:  adhdListen.mcpURL(adhdPort),
-		Projects: projectSeedsFromEnv(),
-	}
-
 	// Tell our own ADHD about this cluster right away so it registers the
 	// cluster peer and its project proxy tools (adhd.project.<name>.call)
 	// without waiting for another cluster to join.
 	sendJoin(context.Background(), clusterInfo.AdhdMCP, clusterInfo)
-
-	discoverySrv, discoveryErr := startDiscoveryServer(clusterInfo, registry)
-	switch discoveryErr {
-	case nil:
-		// We own the port — advertise it over mDNS only if the bind is
-		// reachable from the LAN. A loopback registry has nothing to announce.
-		defer func() {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer shutdownCancel()
-			_ = discoverySrv.Shutdown(shutdownCtx)
-		}()
-		mdnsSrv, mdnsErr := registerRegistryMDNS(registry)
-		switch {
-		case mdnsErr != nil:
-			fmt.Fprintf(os.Stderr, "warning: mDNS registration failed: %v\n", mdnsErr)
-		case mdnsSrv != nil:
-			defer mdnsSrv.Shutdown()
-		}
-	default:
-		// Port taken — try to join an existing lezz registry.
-		deregFn, joinErr := joinDiscoveryServer(clusterInfo)
-		if joinErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: discovery unavailable (port busy, not a lezz registry): %v\n", joinErr)
-		} else {
-			fmt.Printf("joined existing discovery registry as %s\n", clusterInfo.Name)
-			defer deregFn()
-			// Immediately push our cluster info to all existing ADHD MCP instances
-			// so their dashboards update without waiting for the next poll cycle.
-			notifyExistingADHD(clusterInfo)
-		}
-	}
 
 	// --- Publish the running cluster ----------------------------------------
 	// From here on `lezz demo status|stop` can find this process. The record is
