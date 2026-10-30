@@ -6,8 +6,8 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/grandcat/zeroconf v1.0.0
-	github.com/james-gibson/isotope v0.5.0
-	github.com/james-gibson/smoke-alarm v0.13.0
+	github.com/james-gibson/isotope v0.6.0
+	github.com/james-gibson/smoke-alarm v0.13.1
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	golang.org/x/sys v0.48.0
 	golang.org/x/time v0.14.0

@@ -80,6 +80,15 @@ type ProdOptions struct {
 	// an operator decision (lezz.go#59). It is carried into a rotated child, so
 	// a handoff does not quietly change who can reach the registry.
 	RegistryBind string
+	// Trust selects the evidence shape the cluster hands its children, and with
+	// it where the key material comes from (isotope#26):
+	//   secret       a launch secret minted for this cluster (default)
+	//   derived      a subkey derived from the parent named by
+	//                LEZZ_TRUST_PARENT / LEZZ_TRUST_PARENT_SECRET
+	//   certificate  a certificate an operator provisioned, pinned to a root
+	// The shape is an init flag because it cannot be changed by editing a
+	// rendered config: a rotation must present the same identity, not a new one.
+	Trust string
 	// RotateTimeout bounds the wait for the child's registry after handoff.
 	RotateTimeout time.Duration
 }
@@ -105,6 +114,14 @@ func (o ProdOptions) normalized() (ProdOptions, error) {
 	}
 	if o.Generation < 0 {
 		return o, fmt.Errorf("generation %d must be >= 0", o.Generation)
+	}
+	switch o.Trust {
+	case "":
+		o.Trust = TrustSecret
+	case TrustSecret, TrustDerived, TrustCertificate:
+	default:
+		return o, fmt.Errorf("trust %q must be one of: %s, %s, %s",
+			o.Trust, TrustSecret, TrustDerived, TrustCertificate)
 	}
 	if _, _, err := registryHost(o.RegistryBind, ""); err != nil {
 		return o, err
@@ -316,6 +333,7 @@ func ParseProdArgs(args []string, output io.Writer) (ProdOptions, error) {
 	child := fs.Bool("child", false, "internal: wait for the previous generation to release its ports")
 	generation := fs.Int("generation", 0, "internal: launchd service generation")
 	registryBind := fs.String("registry-bind", "", "host for the anchor /cluster registry (default: 127.0.0.1; 0.0.0.0 publishes it to the LAN)")
+	trust := fs.String("trust", TrustSecret, "evidence shape: secret (mint), derived (subkey of LEZZ_TRUST_PARENT_SECRET) or certificate (operator-provisioned)")
 
 	if err := fs.Parse(args); err != nil {
 		return ProdOptions{}, err
@@ -332,6 +350,7 @@ func ParseProdArgs(args []string, output io.Writer) (ProdOptions, error) {
 		Child:        *child,
 		Generation:   *generation,
 		RegistryBind: *registryBind,
+		Trust:        *trust,
 	}.normalized()
 }
 
@@ -530,10 +549,11 @@ func RunProd(ctx context.Context, opts ProdOptions) error {
 	nodes := plan.Nodes
 	primary := plan.Primary
 
-	// The cluster's trust root. It lives in the state dir rather than the argv so
-	// a rotated generation inherits the same secret instead of resetting every
-	// agent's rung on handoff, and so `ps` cannot read it.
-	trust, err := loadOrMintClusterTrust(root, opts.Isotope)
+	// The cluster's trust material. It lives in the state dir rather than the
+	// argv so a rotated generation inherits the same identity instead of
+	// resetting every agent's rung on handoff, and so `ps` cannot read it. The
+	// shape was chosen by `--trust` at init; what that produces is loaded here.
+	trust, err := loadOrMintTrust(root, opts.Isotope, opts.Trust)
 	if err != nil {
 		return err
 	}

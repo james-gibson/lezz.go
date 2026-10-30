@@ -57,8 +57,14 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/james-gibson/isotope v0.5.0 h1:5cq81pJ3hqeZrWYsBx3+iBuwqyyMrMek/vCohKS5MGo=
 github.com/james-gibson/isotope v0.5.0/go.mod h1:Ldk+q+foRZrJ8apCeCB+b9HdwytbkxIVnMZMQsDtaDA=
+github.com/james-gibson/isotope v0.6.0 h1:ejuCEp4h5zjhHdlF2tImbZZNQOGjKXaqAP4HNANitaQ=
+github.com/james-gibson/isotope v0.6.0/go.mod h1:Ldk+q+foRZrJ8apCeCB+b9HdwytbkxIVnMZMQsDtaDA=
 github.com/james-gibson/smoke-alarm v0.13.0 h1:EeBeJ58UwrRbC95R/YcfaWx+FwNDybVznUM27W6JIUI=
 github.com/james-gibson/smoke-alarm v0.13.0/go.mod h1:H4Yfd4czHiXJ2/sQzenRmtTHU0y1x3Lxj28j1TS01NE=
+github.com/james-gibson/smoke-alarm v0.13.1-0.20261030042728-87566f406a16 h1:P6h8yWpNIMWbBcqr+JTYFCR9N+qTQ9bmwfeVG9IszYw=
+github.com/james-gibson/smoke-alarm v0.13.1-0.20261030042728-87566f406a16/go.mod h1:3gdSQYus7m7woa9g+UKEJiyCCYFs25rkrpiq+7cr700=
+github.com/james-gibson/smoke-alarm v0.13.1 h1:MVuemplwEeH7/ZgpW6D+3uUJ4BKoeAxtQudH+eIXRfE=
+github.com/james-gibson/smoke-alarm v0.13.1/go.mod h1:3gdSQYus7m7woa9g+UKEJiyCCYFs25rkrpiq+7cr700=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
