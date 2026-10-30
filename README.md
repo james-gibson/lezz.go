@@ -330,9 +330,37 @@ looks like this), and **2 for anything unattested**. Read the evidence in
 `GET /isotope/list`: each record carries `attested_by` and the reasons behind its
 rung.
 
-`lezz prod` keeps its secret in the cluster's state directory rather than its
-argv, so a rotated generation inherits it: a handoff must not read as a trust
-reset, and `ps` must not show the key.
+`lezz prod` keeps its trust material in the cluster's state directory rather
+than its argv, so a rotated generation inherits it: a handoff must not read as a
+trust reset, and `ps` must not show the key.
+
+### Trust shapes
+
+`--trust` chooses how the cluster proves itself, and with it where the key
+material comes from (isotope#26). The shape is an init flag, not something a
+rendered config can change:
+
+| shape | key material | what the alarm verifies | what adhd receives |
+| --- | --- | --- | --- |
+| `secret` (default) | a 32-byte secret, minted once per cluster and kept in the state dir | the HMAC receipt, against `trust.clusters` | `LEZZ_CLUSTER_ID` + `LEZZ_CLUSTER_SECRET` |
+| `derived` | `isotope.DeriveClusterSecret(parent, child)`, computed from `LEZZ_TRUST_PARENT_SECRET` | the child's HMAC receipt, against `trust.clusters[child]` | the derived id + secret |
+| `certificate` | a certificate a root issued and the private key it names, provisioned by the operator and kept in the state dir | the ed25519 receipt, against the pinned root in `trust.roots` | `LEZZ_CLUSTER_CERT` + `LEZZ_CLUSTER_KEY` |
+
+```sh
+# a child cluster registering as itself, unable to mint as its parent
+LEZZ_TRUST_PARENT=home LEZZ_TRUST_PARENT_SECRET=... \
+  lezz prod --isotope home-kb --trust derived
+
+# a public cluster: operator holds the seed key, lezz holds the certificate
+LEZZ_CLUSTER_CERT=... LEZZ_CLUSTER_KEY=... \
+LEZZ_TRUST_ROOT=seed-42 LEZZ_TRUST_ROOT_KEY=... \
+  lezz prod --isotope lab-42 --trust certificate
+```
+
+Nothing is minted for `certificate`: a cluster cannot certify itself to a root it
+does not hold, so missing material is a provisioning error. The certificate and
+key are written to the state dir on first init and reused by every generation
+after that — a rotation presents the same identity.
 
 Connect the dashboard to a running demo cluster:
 
