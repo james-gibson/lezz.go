@@ -1,6 +1,7 @@
 package seed
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -154,5 +155,66 @@ func TestMintRouteIsAddressable(t *testing.T) {
 			t.Fatalf("minted route %q twice", route)
 		}
 		seen[route] = struct{}{}
+	}
+}
+
+// publicSeedPath is the seed published for download, relative to this package.
+const publicSeedPath = "../../seeds/public/zaphod-beeblebrox.json"
+
+// TestPublicSeedLoads keeps the published seed usable: it has to be a seed this
+// package accepts, naming the identity it is advertised under.
+func TestPublicSeedLoads(t *testing.T) {
+	f, err := Load(publicSeedPath)
+	if err != nil {
+		t.Fatalf("published seed does not load: %v", err)
+	}
+	if f.Seed.ID != "zaphod-beeblebrox" {
+		t.Fatalf("seed id = %q, want the burned identity", f.Seed.ID)
+	}
+	if f.Seed.Surface != "base" {
+		t.Fatalf("surface = %q, want base (a lezz auto cluster is base-<pid>)", f.Seed.Surface)
+	}
+	if f.Seed.Start != (Start{Real: 42, Imaginary: 0, Rung: 0}) {
+		t.Fatalf("start = %+v, want the 42+0i ground truth at rung 0", f.Seed.Start)
+	}
+	if f.Auth.Mode != "external" || !strings.HasPrefix(f.Auth.Ref, "env:") {
+		t.Fatalf("auth = %+v, want an external env: reference", f.Auth)
+	}
+}
+
+// TestPublicSeedGrantsNothing is the point of publishing it: the referenced key
+// is set nowhere, so the seed cannot place a stranger on anything but the
+// anonymous surface. A public file that resolved a credential would be a leak.
+func TestPublicSeedGrantsNothing(t *testing.T) {
+	f, err := Load(publicSeedPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	t.Setenv(strings.TrimPrefix(f.Auth.Ref, "env:"), "")
+	present, err := ResolveAuth(f.Auth.Ref)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", f.Auth.Ref, err)
+	}
+	if present {
+		t.Fatalf("%s resolves a credential; a published seed must not", f.Auth.Ref)
+	}
+}
+
+// TestPublicSeedHoldsOnlyDeclaredFields stops a secret from being pasted into a
+// file that is expected to be public: an unknown field is a new place to hide
+// one, and the seed schema has no room for values.
+func TestPublicSeedHoldsOnlyDeclaredFields(t *testing.T) {
+	data, err := os.ReadFile(publicSeedPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var f File
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&f); err != nil {
+		t.Fatalf("published seed carries a field the schema does not declare: %v", err)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
 	}
 }

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "seed": {
+    "id": "zaphod-beeblebrox",
+    "surface": "base",
+    "start": {
+      "real": 42,
+      "imaginary": 0,
+      "rung": 0
+    }
+  },
+  "project": {
+    "name": "zaphod",
+    "repo": "james-gibson/isotope"
+  },
+  "auth": {
+    "mode": "external",
+    "ref": "env:ZAPHOD_CLUSTER_KEY",
+    "subject": "zaphod-beeblebrox"
+  }
+}
