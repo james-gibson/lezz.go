@@ -40,11 +40,11 @@ jobs:
     name: Build site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # The generator is its own module, so the CLI's dependency graph is
           # untouched by anything the site needs.
