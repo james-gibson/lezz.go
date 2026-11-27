@@ -80,6 +80,26 @@ embedded at build time (`-X main.buildGitHubClientID=<id>`), and no client secre
 is used. See [docs/github-auth.md](docs/github-auth.md) for creating the OAuth
 App and the storage/security model.
 
+### Address plane binaries
+
+Two commands ship beside `lezz` and carry the seed/address plane
+([docs/seed.md](docs/seed.md#the-address-plane)):
+
+```sh
+seed-announce -key <b64> -seed <id> -slot <slot> [-dns-domain <zone>] [-mdns]
+seed-invite   -config ./configs/seed-invite.json
+```
+
+```sh
+./scripts/build-seed-plane.sh                              # dist/ per OS/arch + SHA-256SUMS
+CONFIG=./configs/seed-invite.json ./scripts/install-seed-invite.sh
+```
+
+`seed-invite` resolves an inviter's name to a binding and refuses to forward
+without a live signed expectation and the operator token. It is the plane the
+WAN front consumes; the front itself is
+[wan-ingress](https://github.com/james-gibson/wan-ingress).
+
 ---
 
 ## Managed Tools

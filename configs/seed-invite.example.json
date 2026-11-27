@@ -1,0 +1,19 @@
+{
+  "addr": "0.0.0.0:8080",
+  "registry": "http://127.0.0.1:18080",
+  "name": "wan-ingress",
+  "token": "REPLACE_WITH_AGREED_BEARER_TOKEN",
+  "seed": "seed-42",
+  "slot": "wan-ingress",
+  "announce_key": "REPLACE_WITH_BASE64URL_32_BYTE_KEY_SHARED_WITH_THE_ANNOUNCER",
+  "dns_domain": "_rot.seed-42.lab.example.",
+  "mdns": false,
+  "mdns_domain": "_lezz-rot._tcp.local.",
+  "tick_seconds": 5,
+  "tick_offset": 0,
+  "require_announcement": true,
+  "peers": [
+    "http://peer-a.example:8080",
+    "http://peer-b.example:8080"
+  ]
+}
