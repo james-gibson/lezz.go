@@ -1,0 +1,14 @@
+[Unit]
+Description=lezz seed-addressed invite plane
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__BINARY__ -config __CONFIG__
+Restart=always
+RestartSec=2s
+StandardOutput=append:__LOGDIR__/seed-invite.log
+StandardError=append:__LOGDIR__/seed-invite.err.log
+
+[Install]
+WantedBy=multi-user.target
