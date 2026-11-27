@@ -81,8 +81,8 @@ func TestDeskEndpoint(t *testing.T) {
 	if desk := getDesk(); !desk.Empty || desk.Content != 0 || desk.LeaseUntil != nil {
 		t.Fatalf("boot desk = %+v, want empty", desk)
 	}
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	if desk := getDesk(); desk.Empty || desk.Content != 0 || desk.Rotation != a.Rotation || desk.LeaseUntil == nil {
 		t.Fatalf("armed desk = %+v, want occupied with no content", desk)
@@ -128,8 +128,8 @@ func TestSeedInviteRequiresAndConsumesAnnouncement(t *testing.T) {
 		t.Fatalf("status without ticket = %d, want 403", resp.StatusCode)
 	}
 
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	req, err := http.NewRequest(http.MethodPost, proxy.URL+"/mcp", http.NoBody)
 	if err != nil {
@@ -165,8 +165,8 @@ func TestSeedInviteStatusReportsExpectation(t *testing.T) {
 	registry := testRegistry(t, "http://127.0.0.1:1")
 	defer registry.Close()
 	store, a := testStore(t)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	proxy := httptest.NewServer(newHandler(testConfig(registry.URL), store, &http.Client{}))
 	defer proxy.Close()
@@ -189,8 +189,8 @@ func TestInversionChallengeChecksPeers(t *testing.T) {
 	registry := testRegistry(t, "http://127.0.0.1:1")
 	defer registry.Close()
 	store, a := testStore(t)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

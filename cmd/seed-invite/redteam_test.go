@@ -100,8 +100,8 @@ func TestRedTeamStaleLastSeenCannotKeepDeskOccupied(t *testing.T) {
 	store := announce.NewStoreWithClock(testKey, "seed-42", 5*time.Second, 0,
 		func() time.Time { return time.Unix(now, 0) })
 	a := redteamSigned(t, "seed-42", "wan-ingress", "slot-a", "rot-stale", "nonce-stale", 10)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	cfg := testConfig("http://127.0.0.1:1")
 	cfg.Slot = "slot-a"
@@ -162,8 +162,8 @@ func TestRedTeamCrossNameTicketAndReplay(t *testing.T) {
 	defer registry.Close()
 
 	store, a := testStore(t)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	proxy := httptest.NewServer(newHandler(testConfig(registry.URL), store, &http.Client{}))
 	defer proxy.Close()
@@ -220,8 +220,8 @@ func TestRedTeamNonceFloodHasOneWinner(t *testing.T) {
 	defer registry.Close()
 
 	store, a := testStore(t)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	proxy := httptest.NewServer(newHandler(testConfig(registry.URL), store, &http.Client{}))
 	defer proxy.Close()
@@ -261,8 +261,8 @@ func TestRedTeamChallengeRequiresPositiveTick(t *testing.T) {
 	registry := testRegistry(t, "http://127.0.0.1:1")
 	defer registry.Close()
 	store, a := testStore(t)
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	proxy := httptest.NewServer(newHandler(testConfig(registry.URL), store, &http.Client{}))
 	defer proxy.Close()
@@ -306,8 +306,8 @@ func TestRedTeamChallengeCannotBeForgedByPeers(t *testing.T) {
 	proxy.Close()
 
 	// Local announcement, peer refuses to corroborate: still not confirmed.
-	if err := store.Add(a); err != nil {
-		t.Fatal(err)
+	if addErr := store.Add(a); addErr != nil {
+		t.Fatal(addErr)
 	}
 	silentPeer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(announce.Status{LocalTick: 10})

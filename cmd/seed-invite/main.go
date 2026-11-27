@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -68,7 +69,7 @@ func loadConfigFile(path string) (Config, error) {
 	if path == "" {
 		return Config{}, nil
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // the operator supplies the config path
 	if err != nil {
 		return Config{}, fmt.Errorf("open config: %w", err)
 	}
@@ -85,7 +86,7 @@ func loadConfigFile(path string) (Config, error) {
 
 // applyFlags lets explicit flags override a config field without a bool flag
 // accidentally turning an operator's true back to false.
-func applyFlags(cfg *Config, set map[string]bool, flags map[string]func()) {
+func applyFlags(set map[string]bool, flags map[string]func()) {
 	for name, apply := range flags {
 		if set[name] {
 			apply()
@@ -179,7 +180,8 @@ func fetchStatus(ctx context.Context, peer string, client *http.Client) (announc
 }
 
 func statusHasRotation(status announce.Status, name, rotation string, tick int64) bool {
-	for _, a := range status.Seen {
+	for i := range status.Seen {
+		a := &status.Seen[i]
 		if a.Name == name && a.Rotation == rotation && a.Tick >= tick {
 			return true
 		}
@@ -274,7 +276,7 @@ func newHandler(cfg Config, store *announce.Store, client *http.Client) http.Han
 			var ok bool
 			rotation, ok = store.Consume(invite, ticket)
 			if !ok {
-				log.Printf("refuse invite %q: no live rotational expectation", invite)
+				log.Printf("refuse invite %q: no live rotational expectation", invite) //nolint:gosec // G706: invite is %q-quoted
 				http.Error(w, "no live rotational expectation", http.StatusForbidden)
 				return
 			}
@@ -282,24 +284,28 @@ func newHandler(cfg Config, store *announce.Store, client *http.Client) http.Han
 
 		endpoint, err := resolve(r.Context(), cfg.Registry, invite, client)
 		if err != nil {
-			log.Printf("resolve invite %q: %v", invite, err)
+			log.Printf("resolve invite %q: %v", invite, err) //nolint:gosec // G706: invite is %q-quoted
 			http.Error(w, "invite not resolvable", http.StatusBadGateway)
 			return
 		}
 		target, err := url.Parse(endpoint)
 		if err != nil || target.Host == "" {
-			log.Printf("invalid endpoint %q for invite %q: %v", endpoint, invite, err)
+			log.Printf("invalid endpoint %q for invite %q: %v", endpoint, invite, err) //nolint:gosec // G706: both values are %q-quoted
 			http.Error(w, "invite not resolvable", http.StatusBadGateway)
 			return
 		}
 
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		proxy.Director = func(out *http.Request) {
+		// Rewrite, not Director: the outbound request is already a header clone,
+		// so the caller's grant is preserved and the operator token is added only
+		// when the caller brought none.
+		proxy := &httputil.ReverseProxy{}
+		proxy.Rewrite = func(pr *httputil.ProxyRequest) {
+			pr.SetXForwarded() // Director mode did this implicitly; Rewrite does not
+			out := pr.Out
 			out.URL.Scheme = target.Scheme
 			out.URL.Host = target.Host
 			out.URL.Path = singleJoining(target.Path, out.URL.Path)
 			out.Host = target.Host
-			out.Header = out.Header.Clone()
 			if out.Header.Get("Authorization") == "" && cfg.Token != "" {
 				out.Header.Set("Authorization", "Bearer "+cfg.Token)
 			}
@@ -310,7 +316,7 @@ func newHandler(cfg Config, store *announce.Store, client *http.Client) http.Han
 			}
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("forward invite %q: %v", invite, err)
+			log.Printf("forward invite %q: %v", invite, err) //nolint:gosec // G706: invite is %q-quoted
 			http.Error(w, "egress unavailable", http.StatusBadGateway)
 		}
 		proxy.ServeHTTP(w, r)
@@ -346,7 +352,7 @@ func main() {
 	}
 	set := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	applyFlags(&cfg, set, map[string]func(){
+	applyFlags(set, map[string]func(){
 		"addr":                 func() { cfg.Addr = *addr },
 		"registry":             func() { cfg.Registry = *registry },
 		"name":                 func() { cfg.Name = *name },
@@ -402,31 +408,40 @@ func main() {
 	interval := time.Duration(cfg.TickSeconds) * time.Second
 	store := announce.NewStore(keyBytes, cfg.Seed, interval, cfg.TickOffset)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	sink := announcementSink(cfg, store)
 	if cfg.DNSDomain != "" {
 		source := &announce.DNSSource{Domain: cfg.DNSDomain, Interval: interval, Lookup: nil}
 		go func() {
-			if err := source.Run(ctx, sink); err != nil {
-				log.Printf("dns announcement source: %v", err)
+			if runErr := source.Run(ctx, sink); runErr != nil {
+				log.Printf("dns announcement source: %v", runErr)
 			}
 		}()
 	}
 	if cfg.MDNS {
 		source := &announce.MDNSSource{Domain: cfg.MDNSDomain, Interface: cfg.MDNSInterface}
 		go func() {
-			if err := source.Run(ctx, sink); err != nil {
-				log.Printf("mdns announcement source: %v", err)
+			if runErr := source.Run(ctx, sink); runErr != nil {
+				log.Printf("mdns announcement source: %v", runErr)
 			}
 		}()
 	}
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
+		cancel()
 		log.Fatalf("listen %s: %v", cfg.Addr, err)
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	log.Printf("seed-invite listening addr=%s registry=%s name=%s seed=%s tick=%d offset=%d",
 		ln.Addr(), cfg.Registry, cfg.Name, cfg.Seed, cfg.TickSeconds, cfg.TickOffset)
-	log.Fatal(http.Serve(ln, newHandler(cfg, store, client)))
+	srv := &http.Server{
+		Handler:           newHandler(cfg, store, client),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	err = srv.Serve(ln)
+	cancel()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("serve: %v", err)
+	}
 }

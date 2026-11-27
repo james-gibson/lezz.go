@@ -20,7 +20,7 @@ type DNSSource struct {
 	Lookup   LookupTXT
 }
 
-// Run polls until the context is cancelled. Parse failures are ignored: a bad
+// Run polls until the context is canceled. Parse failures are ignored: a bad
 // TXT record is not an announcement, and must not stop the watcher.
 func (s *DNSSource) Run(ctx context.Context, sink func(Announcement)) error {
 	if s.Domain == "" {

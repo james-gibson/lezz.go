@@ -35,8 +35,8 @@ func TestTXTRoundTripAndTamperDetection(t *testing.T) {
 	if got != a {
 		t.Fatalf("round trip = %+v, want %+v", got, a)
 	}
-	if err := got.Verify(testKey); err != nil {
-		t.Fatalf("verify: %v", err)
+	if verifyErr := got.Verify(testKey); verifyErr != nil {
+		t.Fatalf("verify: %v", verifyErr)
 	}
 	tampered := strings.Replace(text, "rotation=rot-1", "rotation=rot-2", 1)
 	bad, err := ParseTXT(tampered)

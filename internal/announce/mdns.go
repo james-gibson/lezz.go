@@ -18,7 +18,7 @@ type MDNSSource struct {
 }
 
 // Run joins 224.0.0.251:5353 and hands signed TXT records to sink until the
-// context is cancelled.
+// context is canceled.
 func (s *MDNSSource) Run(ctx context.Context, sink func(Announcement)) error {
 	domain := normalizeDomain(s.Domain)
 	if domain == "" {

@@ -149,7 +149,8 @@ func (s *Store) Consume(name, nonce string) (Announcement, bool) {
 func (s *Store) Confirm(name, rotation string, tick int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, a := range s.seen {
+	for i := range s.seen {
+		a := &s.seen[i]
 		if a.Name == name && a.Rotation == rotation && a.Tick >= tick {
 			return true
 		}
@@ -163,14 +164,14 @@ func (s *Store) Status() Status {
 	defer s.mu.Unlock()
 
 	now := s.now()
-	for key, exp := range s.expected {
-		if now.After(exp.ExpiresAt) {
+	for key := range s.expected {
+		if now.After(s.expected[key].ExpiresAt) {
 			delete(s.expected, key)
 		}
 	}
 	last := make(map[string]Announcement, len(s.last))
-	for key, a := range s.last {
-		last[key] = a
+	for key := range s.last {
+		last[key] = s.last[key]
 	}
 	seen := append([]Announcement(nil), s.seen...)
 	return Status{
@@ -190,8 +191,8 @@ func (s *Store) Desk(seed, name, slot string) Desk {
 	defer s.mu.Unlock()
 
 	now := s.now()
-	for key, exp := range s.expected {
-		if now.After(exp.ExpiresAt) {
+	for key := range s.expected {
+		if now.After(s.expected[key].ExpiresAt) {
 			delete(s.expected, key)
 		}
 	}
@@ -199,8 +200,9 @@ func (s *Store) Desk(seed, name, slot string) Desk {
 	desk := Desk{Seed: seed, Name: name, Slot: slot, Content: 0, Empty: true}
 	var best Expectation
 	found := false
-	for _, exp := range s.expected {
-		a := exp.Announcement
+	for key := range s.expected {
+		exp := s.expected[key]
+		a := &exp.Announcement
 		if seed != "" && a.Seed != seed {
 			continue
 		}

@@ -19,10 +19,7 @@ func BuildMDNSPacket(domain, txt string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	rdata, err := encodeTXTStrings(txt)
-	if err != nil {
-		return nil, err
-	}
+	rdata := encodeTXTStrings(txt)
 
 	var buf bytes.Buffer
 	header := make([]byte, 12)
@@ -37,7 +34,7 @@ func BuildMDNSPacket(domain, txt string) ([]byte, error) {
 	_ = binary.Write(&buf, binary.BigEndian, uint16(16))
 	_ = binary.Write(&buf, binary.BigEndian, uint16(1))
 	_ = binary.Write(&buf, binary.BigEndian, uint32(120))
-	_ = binary.Write(&buf, binary.BigEndian, uint16(len(rdata)))
+	_ = binary.Write(&buf, binary.BigEndian, uint16(len(rdata))) //nolint:gosec // a TXT announcement is far below 64 KiB
 	buf.Write(rdata)
 	return buf.Bytes(), nil
 }
@@ -49,25 +46,25 @@ func encodeDNSName(name string) ([]byte, error) {
 		if label == "" || len(label) > 63 {
 			return nil, fmt.Errorf("invalid dns label %q", label)
 		}
-		out = append(out, byte(len(label)))
+		out = append(out, byte(len(label))) //nolint:gosec // len(label) is bounded to 63 above
 		out = append(out, label...)
 	}
 	return append(out, 0), nil
 }
 
-func encodeTXTStrings(text string) ([]byte, error) {
+func encodeTXTStrings(text string) []byte {
 	var out []byte
-	for len(text) > 0 {
+	for text != "" {
 		n := len(text)
 		if n > 255 {
 			n = 255
 		}
-		out = append(out, byte(n))
+		out = append(out, byte(n)) //nolint:gosec // n is clamped to 255 above
 		out = append(out, text[:n]...)
 		text = text[n:]
 	}
 	if len(out) == 0 {
 		out = append(out, 0)
 	}
-	return out, nil
+	return out
 }

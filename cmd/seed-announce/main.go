@@ -94,10 +94,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("open mdns socket: %v", err)
 		}
-		defer func() { _ = conn.Close() }()
 		addr := &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
-		if _, err := conn.WriteToUDP(packet, addr); err != nil {
-			log.Fatalf("send mdns announcement: %v", err)
+		_, sendErr := conn.WriteToUDP(packet, addr)
+		_ = conn.Close()
+		if sendErr != nil {
+			log.Fatalf("send mdns announcement: %v", sendErr)
 		}
 		log.Printf("announced rotation=%s tick=%d nonce=%s", rot, current, oneTime)
 	}
