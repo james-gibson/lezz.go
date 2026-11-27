@@ -71,6 +71,15 @@ var Registry = []Tool{
 			},
 		},
 	},
+	{
+		// The WAN front. Installable, but not daemonisable from this table yet:
+		// it needs an operator-owned config and agreement file (docs/placement.md
+		// in the wan-ingress repository), and the token and border key are the
+		// operator's to generate. `lezz prod --ingress` is where a managed
+		// profile belongs, once the rotation carries it.
+		Name:       "wan-ingress",
+		GithubSlug: "james-gibson/wan-ingress",
+	},
 }
 
 // Lookup returns the Tool for the given name, or false if not managed.
