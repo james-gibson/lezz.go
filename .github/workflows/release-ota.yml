@@ -53,12 +53,12 @@ jobs:
       IMAGE_CONFIG: ${{ matrix.config }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 'stable'
 
@@ -139,7 +139,7 @@ jobs:
           echo "Built image: $(basename "${IMG}") ($(du -h "${IMG}" | cut -f1))"
 
       - name: Upload image (${{ matrix.variant }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.variant }}
           path: ${{ steps.image.outputs.image_name }}
@@ -154,7 +154,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -197,7 +197,7 @@ jobs:
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Upload OTA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ota
           path: |
